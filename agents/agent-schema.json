@@ -1,0 +1,370 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Agent Definition Schema",
+  "description": "Schema for defining a new agent in the AI development studio",
+  "type": "object",
+  "required": [
+    "name",
+    "display_name",
+    "type",
+    "scope",
+    "not_scope",
+    "constitution_focus"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "description": "Lowercase-kebab-case identifier for the agent. Used in API calls, branch prefixes, and file paths. Examples: 'backend-dev', 'frontend-dev', 'qa', 'pm', 'evo'",
+      "pattern": "^[a-z0-9](-?[a-z0-9])*$",
+      "examples": ["backend-dev", "frontend-dev", "qa"]
+    },
+    "display_name": {
+      "type": "string",
+      "description": "Human-readable name for the agent. Examples: 'Backend Developer', 'Frontend Developer', 'QA Agent'",
+      "examples": ["Backend Developer", "Frontend Developer"]
+    },
+    "type": {
+      "type": "string",
+      "enum": ["engineering", "product", "quality", "process", "specialist"],
+      "description": "Agent role category. Helps identify agent responsibilities and relationships."
+    },
+    "mission": {
+      "type": "string",
+      "description": "One-line mission statement describing the agent's primary purpose. Used as heading in CLAUDE.md"
+    },
+    "scope": {
+      "type": "array",
+      "description": "What this agent is responsible for. Each item is a domain or responsibility area.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [
+        ["API endpoints", "database queries", "server-side logic", "background jobs"],
+        ["UI components", "pages", "client-side state", "styling"],
+        ["test plan development", "issue identification", "quality metrics"]
+      ]
+    },
+    "not_scope": {
+      "type": "array",
+      "description": "Explicitly what this agent does NOT own. Prevents scope creep and clarifies boundaries.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [
+        ["Frontend code", "Infrastructure", "Process improvements"],
+        ["Backend code", "Deployment", "Code fixes"]
+      ]
+    },
+    "tech_stack": {
+      "type": "array",
+      "description": "Primary technologies and languages this agent works with. Optional; may vary per project.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [
+        "TypeScript",
+        "Node.js",
+        "PostgreSQL",
+        "React",
+        "Tailwind CSS",
+        "Jest",
+        "Playwright"
+      ]
+    },
+    "tools": {
+      "type": "array",
+      "description": "Additional tools, CLIs, or utilities this agent can use beyond standard development tools.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [
+        "studio-cli (internal task/messaging CLI)",
+        "axe DevTools (accessibility testing)",
+        "Postman (API testing)",
+        "DataGrip (database management)"
+      ]
+    },
+    "skills": {
+      "type": "array",
+      "description": "Paths to shared skill files in the knowledge base. These are reusable workflows or knowledge artifacts.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [
+        "@kb: api-design-standards",
+        "@kb: testing-strategy",
+        "@kb: accessibility-checklist"
+      ]
+    },
+    "constitution_focus": {
+      "type": "array",
+      "description": "Which principles from /constitution.md are most critical for this agent's role. Used to emphasize key values in CLAUDE.md.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [
+        "Test-Driven Quality",
+        "Clarity First",
+        "Dependency Visibility",
+        "Security First",
+        "Accessibility First"
+      ]
+    },
+    "api_permissions": {
+      "type": "array",
+      "description": "Which API endpoints this agent is allowed to call. Defines their interaction capabilities.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "tasks:read",
+          "tasks:write",
+          "messages:read",
+          "messages:write",
+          "kb:read",
+          "kb:write",
+          "prds:read",
+          "prd-approvals:write",
+          "metrics:read",
+          "metrics:write"
+        ]
+      },
+      "examples": [
+        ["tasks:read", "tasks:write", "messages:read", "messages:write", "kb:read", "kb:write"],
+        ["tasks:read", "messages:read", "kb:read"]
+      ]
+    },
+    "branch_prefix": {
+      "type": "string",
+      "description": "Git branch prefix pattern for this agent's work. Used by PM to create and manage branches.",
+      "examples": ["agent/backend-dev/<task-id>", "agent/frontend-dev/<task-id>"]
+    },
+    "reporting_to": {
+      "type": "array",
+      "description": "Which agent(s) this agent reports status to. Typically PM for individual contributors; humans for leadership roles.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [
+        ["pm"],
+        ["pm", "human"]
+      ]
+    },
+    "collaborates_with": {
+      "type": "array",
+      "description": "Which other agents this agent frequently collaborates with.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [
+        ["backend-dev", "frontend-dev"],
+        ["backend-dev", "frontend-dev", "qa"]
+      ]
+    },
+    "communication_norms": {
+      "type": "object",
+      "description": "How this agent communicates with others.",
+      "properties": {
+        "primary_channel": {
+          "type": "string",
+          "description": "Preferred communication method",
+          "examples": ["REST API messages", "PR comments", "daily standup"]
+        },
+        "response_time_hours": {
+          "type": "number",
+          "description": "Expected time to respond to questions/issues",
+          "examples": [24, 2]
+        },
+        "escalation_path": {
+          "type": "string",
+          "description": "How issues escalate when agent can't resolve",
+          "examples": ["Report to PM", "Flag for human review"]
+        }
+      }
+    },
+    "success_metrics": {
+      "type": "array",
+      "description": "How to measure if this agent is performing well. Used by EVO for analysis.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [
+        "Task completion rate per sprint",
+        "PR review cycle time (days from open to merged)",
+        "Defect rate (issues found by QA per 100 LOC)",
+        "Test coverage percentage"
+      ]
+    },
+    "constraints": {
+      "type": "array",
+      "description": "Constraints or limitations on this agent's work.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [
+        "Cannot modify infrastructure or deployment",
+        "Cannot make hiring or team decisions",
+        "Cannot override human decisions"
+      ]
+    },
+    "claude_md_path": {
+      "type": "string",
+      "description": "Path to this agent's CLAUDE.md file (the system prompt/constitution for a Claude Code session running as this agent)",
+      "examples": [
+        "/agents/backend-dev/CLAUDE.md",
+        "/agents/pm/CLAUDE.md"
+      ]
+    },
+    "examples": {
+      "type": "array",
+      "description": "Real examples of what a session with this agent would do.",
+      "items": {
+        "type": "string"
+      },
+      "examples": [
+        "Reads task, checks KB, writes backend code, runs tests, opens PR",
+        "Develops test plan, executes tests, reports issues, tracks metrics"
+      ]
+    }
+  },
+  "definitions": {
+    "mvp_agents": {
+      "type": "array",
+      "description": "The 5 MVP agents in the studio",
+      "items": {
+        "type": "object",
+        "required": [
+          "name",
+          "display_name",
+          "type",
+          "mission"
+        ]
+      },
+      "examples": [
+        {
+          "name": "pm",
+          "display_name": "Project Manager",
+          "type": "product",
+          "mission": "Own PRD lifecycle, decompose tasks, coordinate dependencies, track progress"
+        },
+        {
+          "name": "backend-dev",
+          "display_name": "Backend Developer",
+          "type": "engineering",
+          "mission": "Build APIs, database logic, integrations with comprehensive testing"
+        },
+        {
+          "name": "frontend-dev",
+          "display_name": "Frontend Developer",
+          "type": "engineering",
+          "mission": "Build accessible, performant UI and pages"
+        },
+        {
+          "name": "qa",
+          "display_name": "QA Agent",
+          "type": "quality",
+          "mission": "Develop test plans, execute tests, identify issues, track quality metrics"
+        },
+        {
+          "name": "evo",
+          "display_name": "Process Evolution",
+          "type": "process",
+          "mission": "Analyze processes, identify bottlenecks, recommend improvements, measure impact"
+        }
+      ]
+    }
+  },
+  "example": {
+    "name": "backend-dev",
+    "display_name": "Backend Developer",
+    "type": "engineering",
+    "mission": "Build and maintain server-side logic, APIs, database queries, and integrations with best practices, comprehensive testing, and clear documentation.",
+    "scope": [
+      "API endpoints",
+      "Database queries and migrations",
+      "Server-side business logic",
+      "Background jobs and scheduled tasks",
+      "Third-party integrations",
+      "Unit and integration tests",
+      "Performance optimization",
+      "Knowledge base documentation"
+    ],
+    "not_scope": [
+      "Frontend code (React, Next.js, client-side state)",
+      "Infrastructure and deployment",
+      "Process improvements (EVO's responsibility)",
+      "PR merge decisions (PM's responsibility)"
+    ],
+    "tech_stack": [
+      "TypeScript",
+      "Node.js",
+      "Express or Fastify",
+      "PostgreSQL",
+      "Jest",
+      "Mocha"
+    ],
+    "tools": [
+      "studio-cli (internal task management)",
+      "DataGrip (database inspection)",
+      "Postman (API testing)"
+    ],
+    "skills": [
+      "@kb: api-design-standards",
+      "@kb: error-handling-patterns",
+      "@kb: testing-strategy",
+      "@kb: security-checklist"
+    ],
+    "constitution_focus": [
+      "Test-Driven Quality",
+      "Clarity Over Cleverness",
+      "Traceability",
+      "Dependency Visibility",
+      "Security First",
+      "Knowledge Sharing"
+    ],
+    "api_permissions": [
+      "tasks:read",
+      "tasks:write",
+      "messages:read",
+      "messages:write",
+      "kb:read",
+      "kb:write"
+    ],
+    "branch_prefix": "agent/backend-dev/<task-id>",
+    "reporting_to": [
+      "pm"
+    ],
+    "collaborates_with": [
+      "frontend-dev",
+      "qa",
+      "pm"
+    ],
+    "communication_norms": {
+      "primary_channel": "REST API messages and PR comments",
+      "response_time_hours": 24,
+      "escalation_path": "Report blocker to PM via /api/messages"
+    },
+    "success_metrics": [
+      "PR cycle time (average days from open to merged)",
+      "Test coverage percentage (target: >80%)",
+      "Defect rate from QA (issues per 100 LOC)",
+      "Task completion rate per week",
+      "Rework incidents (PRs requiring >1 revision)"
+    ],
+    "constraints": [
+      "Cannot deploy to production (PM coordinates deployment)",
+      "Cannot merge own PRs (PM owns merge decision)",
+      "Must write tests for all code (non-negotiable)",
+      "Must follow /constitution.md guidelines"
+    ],
+    "claude_md_path": "/agents/backend-dev/CLAUDE.md",
+    "examples": [
+      "1. Gets task from PM via API; reads acceptance criteria and dependencies",
+      "2. Checks KB for relevant patterns (@kb: api-design-standards, @kb: testing-strategy)",
+      "3. Creates branch agent/backend-dev/TASK-42",
+      "4. Writes API endpoint with tests (target >80% coverage)",
+      "5. Opens PR with clear description, database migrations, performance notes",
+      "6. Responds to code review feedback; fixes issues in new commits",
+      "7. Coordinates with QA; responds to test failures; marks task done after merge"
+    ]
+  }
+}

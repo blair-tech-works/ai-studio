@@ -1,0 +1,63 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-studio-db
+    environment:
+      POSTGRES_USER: ai_studio
+      POSTGRES_PASSWORD: ai_studio
+      POSTGRES_DB: ai_studio
+    ports:
+      - "5432:5432"
+    volumes:
+      - ai-studio-pgdata:/var/lib/postgresql/data
+      - ../db/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_studio"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  orchestrator:
+    build:
+      context: ../orchestrator
+      dockerfile: ../docker/Dockerfile.orchestrator
+    container_name: ai-studio-orchestrator
+    environment:
+      DATABASE_URL: postgresql://ai_studio:ai_studio@postgres:5432/ai_studio
+      PORT: "3001"
+      AGENTS_CONFIG_PATH: /app/agents
+      TARGET_REPO_PATH: /app/target-project
+      CLAUDE_CLI_PATH: claude
+    ports:
+      - "3001:3001"
+    volumes:
+      - ../agents:/app/agents:ro
+      - ../constitution.md:/app/constitution.md:ro
+      - /tmp/ai-studio:/tmp/ai-studio
+    depends_on:
+      postgres:
+        condition: service_healthy
+    restart: unless-stopped
+
+  dashboard:
+    build:
+      context: ../dashboard
+      dockerfile: ../docker/Dockerfile.dashboard
+    container_name: ai-studio-dashboard
+    environment:
+      NEXT_PUBLIC_API_URL: http://localhost:3001
+    ports:
+      - "3000:3000"
+    depends_on:
+      - orchestrator
+    restart: unless-stopped
+
+volumes:
+  ai-studio-pgdata:
+
+networks:
+  default:
+    name: ai-studio-network

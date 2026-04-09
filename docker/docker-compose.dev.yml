@@ -1,0 +1,24 @@
+version: '3.8'
+
+services:
+  orchestrator:
+    image: node:22-alpine
+    working_dir: /app
+    command: npm run dev
+    volumes:
+      - ../orchestrator:/app
+      - /app/node_modules
+    environment:
+      DATABASE_URL: postgresql://ai_studio:ai_studio@postgres:5432/ai_studio
+      PORT: "3001"
+      AGENTS_CONFIG_PATH: /agents
+      TARGET_REPO_PATH: /target-project
+      CLAUDE_CLI_PATH: claude
+
+  dashboard:
+    image: node:22-alpine
+    working_dir: /app
+    command: npm run dev
+    volumes:
+      - ../dashboard:/app
+      - /app/node_modules

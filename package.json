@@ -1,0 +1,22 @@
+{
+  "name": "ai-studio",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Multi-agent AI development studio — autonomous Claude Code agent orchestration platform",
+  "workspaces": [
+    "orchestrator",
+    "dashboard"
+  ],
+  "scripts": {
+    "dev": "concurrently \"npm run dev:orchestrator\" \"npm run dev:dashboard\"",
+    "dev:orchestrator": "npm run dev --workspace=orchestrator",
+    "dev:dashboard": "npm run dev --workspace=dashboard",
+    "build": "npm run build --workspace=orchestrator && npm run build --workspace=dashboard",
+    "db:migrate": "npm run db:migrate --workspace=orchestrator",
+    "docker:up": "docker compose -f docker/docker-compose.yml up -d",
+    "docker:down": "docker compose -f docker/docker-compose.yml down"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.0"
+  }
+}

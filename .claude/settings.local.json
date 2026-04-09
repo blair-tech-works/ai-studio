@@ -1,0 +1,24 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(xargs kill:*)",
+      "mcp__Claude_Preview__preview_start",
+      "Bash(export PATH=\"/usr/local/bin:$PATH\")",
+      "Bash(pg_isready)",
+      "Bash(brew services:*)",
+      "Bash(pg_ctl -D /usr/local/var/postgres start)",
+      "Bash(pg_isready -h localhost)",
+      "Bash(export PATH=/usr/local/bin:$PATH)",
+      "Read(//usr/local/var/postgres/**)",
+      "Read(//usr/local/Cellar/**)",
+      "Bash(mkdir -p /tmp/ai-studio-pgdata)",
+      "Bash(initdb -D /tmp/ai-studio-pgdata)",
+      "Bash(createuser -h localhost ai_studio)",
+      "Bash(createdb -h localhost -O ai_studio ai_studio)",
+      "Bash(psql -h localhost -U ai_studio -d ai_studio -f /Users/colbyblair/code/blair_tech_works/ai-studio/db/migrations/001_initial_schema.sql)",
+      "Bash(psql -h localhost -U ai_studio -d ai_studio -f /Users/colbyblair/code/blair_tech_works/ai-studio/db/migrations/002_seed_agents.sql)",
+      "Bash(curl -s http://localhost:3001/api/agents)",
+      "Bash(curl -s -N --max-time 3 http://localhost:3001/api/events)"
+    ]
+  }
+}
