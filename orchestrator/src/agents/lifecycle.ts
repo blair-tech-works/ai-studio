@@ -144,11 +144,15 @@ export class AgentLifecycleManager {
       child.on('exit', async (code) => {
         console.log(`Agent '${agentName}' exited with code ${code}`);
         this.activeProcesses.delete(agentName);
-        const interval = this.heartbeatIntervals.get(agentName);
-        if (interval) { clearInterval(interval); this.heartbeatIntervals.delete(agentName); }
-        // Clean exit (code 0) = idle, crash = error
+        const hbInterval = this.heartbeatIntervals.get(agentName);
+        if (hbInterval) { clearInterval(hbInterval); this.heartbeatIntervals.delete(agentName); }
         const exitStatus = code === 0 ? 'idle' : 'error';
         await query('UPDATE agents SET status = $1, pid = NULL WHERE name = $2', [exitStatus, agentName]);
+
+        // Post-exit: if PM finished, spawn agents that have assigned tasks
+        if (agentName === 'pm' && code === 0) {
+          await this._spawnAgentsForTasks(repoPath || targetRepo);
+        }
       });
 
       // Store process reference
@@ -300,6 +304,211 @@ export class AgentLifecycleManager {
     };
   }
 
+  /**
+   * Spawn PM specifically for PRD task decomposition.
+   */
+  async startAgentForDecomposition(prdId: string, repoPath: string): Promise<void> {
+    // Get PM agent config
+    const pmResult = await query('SELECT id, name FROM agents WHERE name = $1', ['pm']);
+    if (pmResult.rows.length === 0) throw new Error('PM agent not found');
+
+    const pmId = pmResult.rows[0].id;
+
+    // Get all agent IDs for assignment instructions
+    const agentsResult = await query('SELECT id, name, type FROM agents');
+    const agentMap = agentsResult.rows.map((a: any) => `${a.name} (${a.type}): ${a.id}`).join('\n');
+
+    const decompositionPrompt = `You are the PM agent. A PRD has been approved by all agents and needs to be decomposed into executable tasks.
+
+CRITICAL RULE: Every task you create must be fully actionable. Agents execute autonomously — they cannot ask the human for input. If the PRD has any remaining ambiguity, YOU make the decision, document it in the task description, and move on. Do NOT create tasks that say "waiting on stakeholder" or "needs human input." That is never acceptable.
+
+1. Read the approved PRD:
+   curl -s http://localhost:3001/api/prds/${prdId}
+
+2. Break it down into granular tasks. For each task, create it via the API:
+   curl -s -X POST http://localhost:3001/api/tasks \\
+     -H "Content-Type: application/json" \\
+     -d '{
+       "title": "<task title>",
+       "description": "<detailed description with acceptance criteria>",
+       "priority": "<critical|high|medium|low>",
+       "prd_id": "${prdId}",
+       "assigned_to": "<agent UUID from the list below>"
+     }'
+
+3. Agent IDs for assignment:
+${agentMap}
+
+   Assignment rules:
+   - API/server/database work → backend-dev
+   - UI components/pages/styling → frontend-dev
+   - Test plans/test execution → qa
+   - Process/workflow improvements → evo
+   - Do NOT assign tasks to pm (yourself) — your job is decomposition, not execution
+
+4. Create tasks with status "backlog". Set priority based on dependencies:
+   - Critical: blocks other tasks
+   - High: core feature work
+   - Medium: supporting features
+   - Low: nice-to-haves
+
+5. After creating all tasks, update them to "todo" status:
+   curl -s -X PATCH http://localhost:3001/api/tasks/<task_id> \\
+     -H "Content-Type: application/json" \\
+     -d '{"status": "todo"}'
+
+6. If the PRD has open questions or ambiguity, resolve them yourself:
+   - Make a reasonable default decision
+   - Document the decision in the relevant task description with "[PM Decision]" prefix
+   - Update the PRD with the decision:
+     curl -s -X PATCH http://localhost:3001/api/prds/${prdId} \\
+       -H "Content-Type: application/json" \\
+       -d '{"content": "<updated PRD content with decisions documented>"}'
+
+Begin now. Read the PRD and create the tasks.`;
+
+    // Stop PM if already running
+    try { await this.stopAgent('pm'); } catch {}
+    await new Promise(r => setTimeout(r, 1000));
+
+    // Start PM with decomposition prompt
+    await this._spawnAgentWithPrompt('pm', pmId, repoPath, decompositionPrompt);
+    console.log(`PM spawned for task decomposition of PRD '${prdId}'`);
+  }
+
+  /**
+   * After PM exits, spawn agents that have tasks assigned to them.
+   */
+  private async _spawnAgentsForTasks(repoPath: string): Promise<void> {
+    try {
+      console.log('Agent exited — checking for agents with assigned todo tasks...');
+
+      // Find agents that have todo/backlog tasks and aren't running
+      const taskResult = await query(
+        `SELECT DISTINCT a.name FROM tasks t
+         JOIN agents a ON t.assigned_to = a.id
+         WHERE t.status IN ('todo', 'backlog')
+         AND a.name != 'pm'
+         AND a.status NOT IN ('active')`
+      );
+
+      for (const row of taskResult.rows) {
+        try {
+          console.log(`Auto-spawning agent '${row.name}' for assigned tasks...`);
+          await this.startAgent(row.name, repoPath);
+        } catch (err: any) {
+          console.error(`Failed to auto-spawn '${row.name}':`, err.message);
+        }
+      }
+
+      // PM coordination fallback: if todo tasks remain but no agents are active, re-spawn PM
+      if (taskResult.rows.length === 0) {
+        const stuckResult = await query(
+          `SELECT COUNT(*) as stuck FROM tasks WHERE status IN ('todo', 'backlog')`
+        );
+        const activeResult = await query(
+          `SELECT COUNT(*) as active FROM agents WHERE status = 'active'`
+        );
+        const stuck = parseInt(stuckResult.rows[0].stuck);
+        const active = parseInt(activeResult.rows[0].active);
+
+        if (stuck > 0 && active === 0) {
+          console.log(`${stuck} tasks stuck in todo with no active agents — spawning PM coordinator...`);
+          try {
+            const pmResult = await query('SELECT id FROM agents WHERE name = $1', ['pm']);
+            if (pmResult.rows.length > 0) {
+              const coordPrompt = `You are the PM agent running a coordination sweep. There are tasks stuck in "todo" status but no agents are working.
+
+1. Read the task board: curl -s http://localhost:3001/api/tasks
+2. Read agent statuses: curl -s http://localhost:3001/api/agents
+3. For each "todo" task, check if its dependencies (mentioned in description) are satisfied (those tasks are "done")
+4. If a task is unblocked, message the assigned agent:
+   curl -s -X POST http://localhost:3001/api/messages \\
+     -H "Content-Type: application/json" \\
+     -d '{"from_agent": "pm", "to_agent": "<agent_name>", "content": "Your task <TASK-ID> is unblocked. All dependencies are complete. Please begin work.", "type": "task_update"}'
+5. If a task has no dependencies or all deps are done, it's ready to work on immediately.
+
+Check all todo tasks and notify the right agents.`;
+              await this._spawnAgentWithPrompt('pm', pmResult.rows[0].id, repoPath, coordPrompt);
+            }
+          } catch (err: any) {
+            console.error('Failed to spawn PM coordinator:', err.message);
+          }
+        }
+      }
+    } catch (err) {
+      console.error('Failed to spawn agents for tasks:', err);
+    }
+  }
+
+  /**
+   * Low-level spawn helper used by both startAgent and startAgentForDecomposition.
+   */
+  private async _spawnAgentWithPrompt(agentName: string, agentId: string, repoPath: string, prompt: string): Promise<void> {
+    const worktreeManager = new WorktreeManager(repoPath);
+    const worktreePath = await worktreeManager.createWorktree(agentName);
+
+    // Copy CLAUDE.md + constitution.md
+    const sourceClaudeMd = this._getAgentClaudeMdPath(agentName);
+    if (fs.existsSync(sourceClaudeMd)) {
+      await fsPromises.copyFile(sourceClaudeMd, path.join(worktreePath, 'CLAUDE.md'));
+    }
+    const constitutionSrc = path.join(this.projectRoot, 'constitution.md');
+    if (fs.existsSync(constitutionSrc)) {
+      await fsPromises.copyFile(constitutionSrc, path.join(worktreePath, 'constitution.md'));
+    }
+
+    // Prepare env
+    const env: Record<string, string> = {};
+    for (const [k, v] of Object.entries(process.env)) {
+      if (v !== undefined) env[k] = v;
+    }
+    env.PATH = `/usr/local/bin:${env.PATH || ''}`;
+    env.AGENT_NAME = agentName;
+    env.AGENT_ID = agentId;
+    env.API_URL = 'http://localhost:3001/api';
+    delete env.ANTHROPIC_API_KEY;
+
+    const logFilePath = path.join(this.logsDir, `${agentName}.log`);
+    const logFile = fs.createWriteStream(logFilePath, { flags: 'a' });
+
+    console.log(`Spawning agent '${agentName}' in ${worktreePath}...`);
+
+    const child = spawn('npx', ['-y', '@anthropic-ai/claude-code', '--dangerously-skip-permissions'], {
+      cwd: worktreePath,
+      env,
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+
+    if (child.stdout) child.stdout.pipe(logFile);
+    if (child.stderr) child.stderr.pipe(logFile);
+    if (child.stdin) { child.stdin.write(prompt); child.stdin.end(); }
+
+    const pid = child.pid;
+    if (!pid) throw new Error(`Failed to spawn process for '${agentName}'`);
+
+    child.on('exit', async (code) => {
+      console.log(`Agent '${agentName}' exited with code ${code}`);
+      this.activeProcesses.delete(agentName);
+      const hb = this.heartbeatIntervals.get(agentName);
+      if (hb) { clearInterval(hb); this.heartbeatIntervals.delete(agentName); }
+      const exitStatus = code === 0 ? 'idle' : 'error';
+      await query('UPDATE agents SET status = $1, pid = NULL WHERE name = $2', [exitStatus, agentName]);
+
+      // Post-exit: check for todo tasks assigned to idle agents and start them
+      if (code === 0) {
+        await this._spawnAgentsForTasks(repoPath);
+      }
+    });
+
+    this.activeProcesses.set(agentName, child);
+    await query(
+      'UPDATE agents SET status = $1, pid = $2, worktree_path = $3, last_heartbeat = NOW() WHERE name = $4',
+      ['active', pid, worktreePath, agentName]
+    );
+    this._monitorHeartbeat(agentName, pid);
+  }
+
   private _monitorHeartbeat(agentName: string, pid: number): void {
     const existing = this.heartbeatIntervals.get(agentName);
     if (existing) clearInterval(existing);
@@ -334,17 +543,73 @@ export class AgentLifecycleManager {
   }
 
   private _generateAgentPrompt(agentName: string, agentId: string): string {
-    const pmSection = agentName === 'pm' ? `
+    const isDevAgent = ['backend-dev', 'frontend-dev'].includes(agentName);
+    const isQA = agentName === 'qa';
+    const isPM = agentName === 'pm';
+
+    // Role-specific PR workflow
+    let prWorkflow = '';
+
+    if (isDevAgent) {
+      prWorkflow = `
+## PR Workflow (Code Agents)
+When you finish coding a task:
+1. Commit your changes to your worktree branch
+2. Create a PR for QA review:
+   curl -s -X POST http://localhost:3001/api/tasks/<task_id>/create-pr \\
+     -H "Content-Type: application/json" \\
+     -d '{"agent_name": "${agentName}", "title": "<TASK-ID>: <title>", "body": "<description of changes>"}'
+3. Message QA that PR is ready:
+   curl -s -X POST http://localhost:3001/api/messages \\
+     -H "Content-Type: application/json" \\
+     -d '{"from_agent": "${agentName}", "to_agent": "qa", "content": "<TASK-ID> PR ready for review: <pr_url>", "type": "pr_review"}'
+4. If QA sends feedback, read their comments, fix the code, push, and message QA: "Fixes pushed for <TASK-ID>"
+5. Do NOT set status to "done" yourself — QA merges and marks done.`;
+    } else if (isQA) {
+      prWorkflow = `
+## PR Review Workflow (QA Agent — You Are the Merge Gate)
+You are the final quality gate. No code merges without your approval.
+
+1. Check for tasks in review: curl -s http://localhost:3001/api/tasks?status=review
+2. For each PR, read the diff:
+   curl -s http://localhost:3001/api/tasks/<task_id>/pr-diff
+3. Review against the task's acceptance criteria (in description)
+4. If issues found:
+   - Post a PR comment: curl -s -X POST http://localhost:3001/api/tasks/<task_id>/pr-comment \\
+       -H "Content-Type: application/json" -d '{"comment": "<your feedback>"}'
+   - Message the dev agent: "PR feedback for <TASK-ID>: <summary of issues>"
+   - Set task back to in_progress: curl -s -X PATCH http://localhost:3001/api/tasks/<task_id> \\
+       -H "Content-Type: application/json" -d '{"status": "in_progress"}'
+5. If PR passes review:
+   - Merge it: curl -s -X POST http://localhost:3001/api/tasks/<task_id>/merge-pr
+   - Message PM: "<TASK-ID> merged — QA approved"
+6. If a final integration test fails after merge, create FIX tasks:
+   curl -s -X POST http://localhost:3001/api/tasks \\
+     -H "Content-Type: application/json" \\
+     -d '{"title": "FIX: <issue>", "description": "<failure details + repro steps>", "priority": "critical", "prd_id": "<prd_id>", "assigned_to": "<dev_agent_uuid>"}'
+   Message the assigned dev agent with the failure details.`;
+    } else if (isPM) {
+      prWorkflow = `
+## PM Coordination Duties
 9. You can UPDATE PRD content directly:
      curl -s -X PATCH http://localhost:3001/api/prds/<prd_id> \\
        -H "Content-Type: application/json" \\
        -d '{"content": "<updated markdown content>"}'
-   This auto-increments the version. Use this to incorporate agent feedback, resolve open questions, and keep the PRD as the source of truth.` : `
-9. You CANNOT update PRDs directly — only the PM agent can modify PRD content.
-   If you have suggestions for PRD changes, include them in your approval comments or send a message to the PM agent:
-     curl -s -X POST http://localhost:3001/api/messages \\
+10. You can CREATE TASKS from approved PRDs:
+     curl -s -X POST http://localhost:3001/api/tasks \\
        -H "Content-Type: application/json" \\
-       -d '{"from_agent": "${agentName}", "to_agent": "pm", "content": "<your suggestion>", "type": "message"}'`;
+       -d '{"title": "<task>", "description": "<details>", "priority": "<high|medium|low>", "prd_id": "<prd_id>", "assigned_to": "<agent UUID>"}'
+    Get agent UUIDs: curl -s http://localhost:3001/api/agents
+
+## Stale PR Sweep
+Periodically check for tasks stuck in "review" status:
+  curl -s http://localhost:3001/api/tasks?status=review
+If any task has been in review for too long with no recent messages, ping both the dev agent and QA agent:
+  "TASK-X has been in review with no activity. Dev: is the code ready? QA: please review."`;
+    } else {
+      prWorkflow = `
+9. You CANNOT update PRDs directly — send suggestions to the PM agent.`;
+    }
 
     return `You are an autonomous agent named "${agentName}" (ID: ${agentId}) operating within the AI Studio orchestrator.
 
@@ -360,12 +625,18 @@ Your operating instructions:
        -H "Content-Type: application/json" \\
        -d '{"agent_id": "${agentId}", "status": "approved", "comments": "<your review comments>"}'
    - Use status "approved" if the PRD is clear and actionable for your role
-   - Use status "questions" if you have blocking concerns, and include your questions in comments
+   - Use status "questions" if you have blocking concerns
 5. Check for assigned tasks: curl -s http://localhost:3001/api/tasks?assigned_to=${agentId}&status=todo,in_progress
 6. Begin working on the highest priority task available to you
 7. When idle, poll for new messages and tasks every 60 seconds
 8. Report progress through the API: POST http://localhost:3001/api/messages with from_agent="${agentName}"
-${pmSection}
+${prWorkflow}
+
+IMPORTANT: You are fully autonomous. Never block on human input — decide and move forward.
+
+TASK COMPLETION: When you finish a task, notify downstream agents:
+1. Check the task board for tasks mentioning your completed task's external_id as a dependency
+2. Message those tasks' assigned agents that your work is done
 
 Begin operation now. Start by reading CLAUDE.md and constitution.md, then check for messages and PRDs to review.`;
   }

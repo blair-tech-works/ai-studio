@@ -4,6 +4,8 @@ import {
   fetchPRDs,
   fetchPRDById,
   fetchAgents,
+  fetchTasks,
+  fetchMessages,
   publishPRD,
   overridePRD,
   submitPRDApproval,
@@ -12,6 +14,8 @@ import {
   type PRD,
   type PRDApproval,
   type Agent,
+  type Task,
+  type Message,
 } from '@/lib/api';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
@@ -19,6 +23,8 @@ import Link from 'next/link';
 export default function PRDsPage() {
   const [prds, setPRDs] = useState<PRD[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(true);
   const [filter, setFilter] = useState<string>('all');
 
@@ -26,6 +32,7 @@ export default function PRDsPage() {
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [expandedPRD, setExpandedPRD] = useState<PRD | null>(null);
   const [showContent, setShowContent] = useState(false);
+  const [showReviewDetails, setShowReviewDetails] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
 
   // Publish flow state
@@ -33,6 +40,9 @@ export default function PRDsPage() {
   const [repoUrl, setRepoUrl] = useState('');
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishLoading, setPublishLoading] = useState(false);
+
+  // Task message expansion
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
 
   // Question resolution state
   const [replyingTo, setReplyingTo] = useState<string | null>(null); // agent_id
@@ -43,9 +53,11 @@ export default function PRDsPage() {
   useEffect(() => {
     const load = async () => {
       try {
-        const [prdData, agentData] = await Promise.all([fetchPRDs(), fetchAgents()]);
+        const [prdData, agentData, taskData, msgData] = await Promise.all([fetchPRDs(), fetchAgents(), fetchTasks(), fetchMessages({ limit: 100 })]);
         setPRDs(prdData);
         setAgents(agentData);
+        setTasks(taskData);
+        setMessages(msgData);
       } catch (err) {
         console.error('Failed to load data:', err);
       } finally {
@@ -56,9 +68,11 @@ export default function PRDsPage() {
     // Poll for updates every 15s
     const interval = setInterval(async () => {
       try {
-        const [prdData, agentData] = await Promise.all([fetchPRDs(), fetchAgents()]);
+        const [prdData, agentData, taskData, msgData] = await Promise.all([fetchPRDs(), fetchAgents(), fetchTasks(), fetchMessages({ limit: 100 })]);
         setPRDs(prdData);
         setAgents(agentData);
+        setTasks(taskData);
+        setMessages(msgData);
         // Refresh expanded PRD if open
         if (expandedId) {
           const detail = await fetchPRDById(expandedId);
@@ -122,6 +136,9 @@ export default function PRDsPage() {
     try {
       const detail = await fetchPRDById(prdId);
       setExpandedPRD(detail);
+      // Auto-collapse review section if PRD is approved (show tasks instead)
+      const prd = prds.find(p => p.id === prdId);
+      setShowReviewDetails(prd?.status === 'review' || prd?.status === 'draft');
     } catch (err) {
       console.error('Failed to load PRD details:', err);
     } finally {
@@ -364,6 +381,24 @@ export default function PRDsPage() {
                         Override
                       </button>
                     )}
+                    {(prd.status === 'approved' || prd.status === 'active') && (() => {
+                      const prdTasks = tasks.filter(t => t.prd_id === prd.id);
+                      const pmAgent = agents.find(a => a.name === 'pm');
+                      const pmActive = pmAgent?.status === 'active';
+                      return prdTasks.length > 0 ? (
+                        <Link
+                          href="/tasks"
+                          onClick={(e) => e.stopPropagation()}
+                          className="px-2 py-1 bg-green-500/20 text-green-400 border border-green-500/30 rounded text-xs hover:bg-green-500/30"
+                        >
+                          {prdTasks.filter(t => t.status === 'done').length}/{prdTasks.length} tasks
+                        </Link>
+                      ) : pmActive ? (
+                        <span className="px-2 py-1 bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded text-xs animate-pulse">
+                          Decomposing...
+                        </span>
+                      ) : null;
+                    })()}
                   </div>
                 </div>
 
@@ -412,16 +447,22 @@ export default function PRDsPage() {
                       <p className="text-sm text-gray-400 py-4 text-center">Loading details...</p>
                     ) : expandedPRD ? (
                       <>
-                        {/* Agent approval grid */}
+                        {/* Agent approval grid — collapsible when approved */}
                         {expandedPRD.approvals && expandedPRD.approvals.length > 0 && (
                           <div className="mb-4">
-                            <div className="flex items-center justify-between mb-3">
-                              <h4 className="text-sm font-semibold text-white">Agent Review Status</h4>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); setShowReviewDetails(!showReviewDetails); }}
+                              className="flex items-center justify-between w-full mb-3"
+                            >
+                              <div className="flex items-center gap-2">
+                                <span className="text-xs text-gray-500">{showReviewDetails ? '▼' : '▶'}</span>
+                                <h4 className="text-sm font-semibold text-white">Agent Review Status</h4>
+                              </div>
                               <span className="text-xs text-gray-500">
                                 {expandedPRD.approvals.filter((a: PRDApproval) => a.status === 'approved').length}/{expandedPRD.approvals.length} approved
                               </span>
-                            </div>
-                            <div className="space-y-2">
+                            </button>
+                            {showReviewDetails ? (<div className="space-y-2">
                               {expandedPRD.approvals.map((approval: PRDApproval) => {
                                 const status = reviewStatus(approval);
                                 const agent = agentById(approval.agent_id);
@@ -520,8 +561,133 @@ export default function PRDsPage() {
                                 );
                               })}
                             </div>
+                            ) : null}
                           </div>
                         )}
+
+                        {/* Task progress — shown when PRD has tasks */}
+                        {(() => {
+                          const prdTasks = tasks.filter(t => t.prd_id === expandedPRD.id);
+                          if (prdTasks.length === 0) return null;
+
+                          const statusOrder = ['in_progress', 'review', 'qa', 'todo', 'backlog', 'blocked', 'done'];
+                          const sortedTasks = [...prdTasks].sort((a, b) =>
+                            statusOrder.indexOf(a.status) - statusOrder.indexOf(b.status)
+                          );
+
+                          const taskStatusColors: Record<string, string> = {
+                            backlog: 'bg-gray-500/20 text-gray-400 border-gray-500/50',
+                            todo: 'bg-gray-500/20 text-gray-300 border-gray-500/50',
+                            in_progress: 'bg-blue-500/20 text-blue-400 border-blue-500/50',
+                            review: 'bg-purple-500/20 text-purple-400 border-purple-500/50',
+                            qa: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50',
+                            done: 'bg-green-500/20 text-green-400 border-green-500/50',
+                            blocked: 'bg-red-500/20 text-red-400 border-red-500/50',
+                          };
+
+                          const done = prdTasks.filter(t => t.status === 'done').length;
+                          const inProgress = prdTasks.filter(t => t.status === 'in_progress').length;
+
+                          // Get messages related to these tasks
+                          const taskIds = new Set(prdTasks.map(t => t.id));
+
+                          return (
+                            <div className="mb-4">
+                              <div className="flex items-center justify-between mb-3">
+                                <h4 className="text-sm font-semibold text-white">Task Progress</h4>
+                                <span className="text-xs text-gray-500">
+                                  {done}/{prdTasks.length} done{inProgress > 0 ? `, ${inProgress} in progress` : ''}
+                                </span>
+                              </div>
+
+                              {/* Progress bar */}
+                              <div className="w-full bg-dark-border rounded-full h-1.5 mb-3">
+                                <div
+                                  className="bg-green-500 h-1.5 rounded-full transition-all"
+                                  style={{ width: `${prdTasks.length > 0 ? (done / prdTasks.length) * 100 : 0}%` }}
+                                />
+                              </div>
+
+                              <div className="space-y-2">
+                                {sortedTasks.map((task) => {
+                                  const assignedAgent = agents.find(a => a.id === task.assigned_to);
+                                  const taskMessages = messages.filter(m =>
+                                    (m.from_agent === task.assigned_to || m.to_agent === task.assigned_to) &&
+                                    m.content.toLowerCase().includes(task.external_id?.toLowerCase() || '___none___')
+                                  );
+                                  const isExpanded = expandedTaskId === task.id;
+
+                                  return (
+                                    <div
+                                      key={task.id}
+                                      className={`bg-dark-bg border rounded px-3 py-2 cursor-pointer transition-colors ${isExpanded ? 'border-blue-500/50' : 'border-dark-border hover:border-dark-border/80'}`}
+                                      onClick={(e) => { e.stopPropagation(); setExpandedTaskId(isExpanded ? null : task.id); }}
+                                    >
+                                      <div className="flex items-center justify-between">
+                                        <div className="flex items-center gap-2 flex-1 min-w-0">
+                                          <span className="text-[10px] text-gray-500">{isExpanded ? '▼' : '▶'}</span>
+                                          <span className="text-[10px] text-gray-500 font-mono shrink-0">{task.external_id}</span>
+                                          <span className="text-xs text-gray-200 truncate">{task.title}</span>
+                                        </div>
+                                        <div className="flex items-center gap-2 shrink-0 ml-2">
+                                          {assignedAgent && (
+                                            <span className="text-[10px] text-gray-500">{assignedAgent.name}</span>
+                                          )}
+                                          <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${taskStatusColors[task.status] || taskStatusColors.backlog}`}>
+                                            {task.status.replace('_', ' ')}
+                                          </span>
+                                          {taskMessages.length > 0 && (
+                                            <span className="text-[10px] text-gray-500">{taskMessages.length} msg{taskMessages.length !== 1 ? 's' : ''}</span>
+                                          )}
+                                        </div>
+                                      </div>
+
+                                      {isExpanded && (
+                                        <div className="mt-3 border-t border-dark-border pt-3">
+                                          {/* Task description */}
+                                          {task.description && (
+                                            <div
+                                              className="text-xs text-gray-400 mb-3 max-h-32 overflow-y-auto"
+                                              dangerouslySetInnerHTML={{ __html: renderMarkdown(task.description) }}
+                                            />
+                                          )}
+
+                                          {/* Message feed */}
+                                          {taskMessages.length > 0 ? (
+                                            <div>
+                                              <p className="text-[10px] text-gray-500 font-medium mb-2">Messages ({taskMessages.length})</p>
+                                              <div className="space-y-2 max-h-60 overflow-y-auto">
+                                                {taskMessages.map((msg, idx) => (
+                                                  <div key={idx} className="bg-dark-card border border-dark-border rounded px-2.5 py-2">
+                                                    <div className="flex items-center justify-between mb-1">
+                                                      <span className="text-[10px] text-blue-400 font-medium">
+                                                        {agentName(msg.from_agent || '')}
+                                                        {msg.to_agent && (<span className="text-gray-500"> → {agentName(msg.to_agent)}</span>)}
+                                                      </span>
+                                                      <span className="text-[9px] text-gray-600">
+                                                        {new Date(msg.created_at).toLocaleTimeString()}
+                                                      </span>
+                                                    </div>
+                                                    <div
+                                                      className="text-[11px] text-gray-300 leading-relaxed"
+                                                      dangerouslySetInnerHTML={{ __html: renderMarkdown(msg.content) }}
+                                                    />
+                                                  </div>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          ) : (
+                                            <p className="text-[10px] text-gray-500 italic">No messages yet</p>
+                                          )}
+                                        </div>
+                                      )}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            </div>
+                          );
+                        })()}
 
                         {/* PRD content toggle */}
                         <div>

@@ -21,6 +21,11 @@ export class WorktreeManager {
     const branchName = `worktree/${agentName}`;
     const baseRef = baseBranch || this._getDefaultBranch();
 
+    // Clean up any stale worktree registrations
+    try {
+      execSync(`git -C "${this.targetRepoPath}" worktree prune`, { stdio: 'pipe' });
+    } catch {}
+
     // Remove existing worktree if it exists
     if (fs.existsSync(worktreePath)) {
       try {

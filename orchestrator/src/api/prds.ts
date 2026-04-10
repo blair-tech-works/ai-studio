@@ -437,7 +437,42 @@ router.post('/:id/approvals', async (req: Request, res: Response) => {
       );
     }
 
-    res.json(result.rows[0]);
+    const approval = result.rows[0];
+
+    // Check for consensus: all approvals approved or overridden?
+    const consensusResult = await query(
+      `SELECT COUNT(*) as total,
+              COUNT(CASE WHEN status IN ('approved', 'overridden') THEN 1 END) as resolved
+       FROM prd_approvals WHERE prd_id = $1`,
+      [id]
+    );
+    const { total, resolved } = consensusResult.rows[0];
+
+    if (parseInt(total) > 0 && parseInt(total) === parseInt(resolved)) {
+      // Consensus reached — transition PRD to approved
+      const prdResult = await query(
+        `UPDATE prds SET status = 'approved', updated_at = NOW() WHERE id = $1 AND status = 'review' RETURNING *`,
+        [id]
+      );
+
+      if (prdResult.rows.length > 0) {
+        console.log(`PRD '${id}' approved by consensus!`);
+        const prd = prdResult.rows[0];
+        const repoPath = prd.metadata?.repoPath;
+
+        // Auto-spawn PM for task decomposition
+        const lifecycleManager = req.app.get('lifecycleManager');
+        if (lifecycleManager && repoPath) {
+          try {
+            await lifecycleManager.startAgentForDecomposition(id, repoPath);
+          } catch (err: any) {
+            console.error('Failed to start PM for decomposition:', err.message);
+          }
+        }
+      }
+    }
+
+    res.json(approval);
   } catch (error) {
     console.error('Error submitting approval:', error);
     res.status(500).json({ error: 'Failed to submit approval' });

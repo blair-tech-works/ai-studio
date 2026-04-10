@@ -6,6 +6,7 @@ import prdsRouter from './prds';
 import kbRouter from './kb';
 import evoRouter from './evo';
 import eventsRouter from './events';
+import settingsRouter from './settings';
 
 const apiRouter = Router();
 
@@ -16,5 +17,6 @@ apiRouter.use('/prds', prdsRouter);
 apiRouter.use('/kb', kbRouter);
 apiRouter.use('/evo', evoRouter);
 apiRouter.use('/events', eventsRouter);
+apiRouter.use('/settings', settingsRouter);
 
 export default apiRouter;

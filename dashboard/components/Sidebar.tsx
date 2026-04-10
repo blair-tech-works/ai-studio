@@ -12,7 +12,8 @@ export default function Sidebar() {
     { href: '/messages', label: 'Messages', icon: '💬' },
     { href: '/prds', label: 'PRDs', icon: '📄' },
     { href: '/kb', label: 'Knowledge Base', icon: '📚' },
-    { href: '/evo', label: 'EVO', icon: '🚀' }
+    { href: '/evo', label: 'EVO', icon: '🚀' },
+    { href: '/settings', label: 'Settings', icon: '⚙' }
   ];
 
   return (

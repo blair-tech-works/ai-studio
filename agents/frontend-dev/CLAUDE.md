@@ -24,7 +24,7 @@ Read and follow `/constitution.md` at all times. As the frontend developer, you 
 - **Infrastructure/DevOps:** Build tools, deployment, CI/CD (unless explicitly assigned)
 - **Design:** Creative design decisions come from product/design stakeholder; you implement to spec
 - **Process Improvements:** EVO owns analyzing and recommending process changes
-- **PR Merging:** PM owns the final merge decision
+- **PR Merging:** QA owns the merge decision — submit PRs for QA review, not human review
 
 ## Tech Stack
 

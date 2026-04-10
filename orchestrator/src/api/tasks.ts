@@ -1,6 +1,8 @@
 import { Router, Request, Response } from 'express';
 import { pool, query } from '../db/pool';
 import { v4 as uuidv4 } from 'uuid';
+import * as github from '../github/client';
+import { resolve } from 'path';
 
 const router = Router();
 
@@ -178,6 +180,138 @@ router.patch('/:id', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error updating task:', error);
     res.status(500).json({ error: 'Failed to update task' });
+  }
+});
+
+// Helper: get repo path from the task's PRD metadata
+async function getRepoPath(taskId: string): Promise<string | null> {
+  const result = await query(
+    `SELECT p.metadata FROM tasks t
+     JOIN prds p ON t.prd_id = p.id
+     WHERE t.id = $1 OR t.external_id = $1`,
+    [taskId]
+  );
+  return result.rows[0]?.metadata?.repoPath || null;
+}
+
+// POST /api/tasks/:id/create-pr — dev agent creates a PR after pushing code
+router.post('/:id/create-pr', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { title, body } = req.body;
+
+    // Get task
+    const taskResult = await query('SELECT * FROM tasks WHERE id = $1 OR external_id = $1', [id]);
+    if (taskResult.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const task = taskResult.rows[0];
+
+    const repoPath = await getRepoPath(id);
+    if (!repoPath) return res.status(400).json({ error: 'No repo path found for this task' });
+
+    const branch = task.branch_name || `agent/${req.body.agent_name || 'dev'}/${task.external_id}`;
+    const prTitle = title || `${task.external_id}: ${task.title}`;
+    const prBody = body || task.description || '';
+
+    const pr = await github.createPR(repoPath, branch, prTitle, prBody);
+
+    // Update task with PR info and status
+    await query(
+      `UPDATE tasks SET pr_url = $1, branch_name = $2, status = 'review', updated_at = NOW()
+       WHERE id = $3`,
+      [pr.url, branch, task.id]
+    );
+
+    res.json({ pr_url: pr.url, pr_number: pr.number, branch });
+  } catch (error: any) {
+    console.error('Error creating PR:', error);
+    res.status(500).json({ error: error.message || 'Failed to create PR' });
+  }
+});
+
+// POST /api/tasks/:id/merge-pr — QA agent merges an approved PR
+router.post('/:id/merge-pr', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const taskResult = await query('SELECT * FROM tasks WHERE id = $1 OR external_id = $1', [id]);
+    if (taskResult.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const task = taskResult.rows[0];
+
+    if (!task.pr_url) return res.status(400).json({ error: 'Task has no PR' });
+
+    const repoPath = await getRepoPath(id);
+    if (!repoPath) return res.status(400).json({ error: 'No repo path found' });
+
+    // Extract PR number from URL
+    const prMatch = task.pr_url.match(/\/pull\/(\d+)/);
+    if (!prMatch) return res.status(400).json({ error: 'Cannot parse PR number from URL' });
+    const prNumber = parseInt(prMatch[1]);
+
+    await github.mergePR(repoPath, prNumber);
+
+    // Update task status to done
+    await query(
+      `UPDATE tasks SET status = 'done', updated_at = NOW() WHERE id = $1`,
+      [task.id]
+    );
+
+    res.json({ merged: true, pr_number: prNumber });
+  } catch (error: any) {
+    console.error('Error merging PR:', error);
+    res.status(500).json({ error: error.message || 'Failed to merge PR' });
+  }
+});
+
+// GET /api/tasks/:id/pr-diff — QA reads the PR diff for review
+router.get('/:id/pr-diff', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    const taskResult = await query('SELECT * FROM tasks WHERE id = $1 OR external_id = $1', [id]);
+    if (taskResult.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const task = taskResult.rows[0];
+
+    if (!task.pr_url) return res.status(400).json({ error: 'Task has no PR' });
+
+    const repoPath = await getRepoPath(id);
+    if (!repoPath) return res.status(400).json({ error: 'No repo path found' });
+
+    const prMatch = task.pr_url.match(/\/pull\/(\d+)/);
+    if (!prMatch) return res.status(400).json({ error: 'Cannot parse PR number' });
+
+    const diff = await github.getPRDiff(repoPath, parseInt(prMatch[1]));
+    res.json({ diff, pr_number: parseInt(prMatch[1]) });
+  } catch (error: any) {
+    console.error('Error getting PR diff:', error);
+    res.status(500).json({ error: error.message || 'Failed to get PR diff' });
+  }
+});
+
+// POST /api/tasks/:id/pr-comment — agent posts a review comment on the PR
+router.post('/:id/pr-comment', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { comment } = req.body;
+
+    if (!comment) return res.status(400).json({ error: 'comment is required' });
+
+    const taskResult = await query('SELECT * FROM tasks WHERE id = $1 OR external_id = $1', [id]);
+    if (taskResult.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const task = taskResult.rows[0];
+
+    if (!task.pr_url) return res.status(400).json({ error: 'Task has no PR' });
+
+    const repoPath = await getRepoPath(id);
+    if (!repoPath) return res.status(400).json({ error: 'No repo path found' });
+
+    const prMatch = task.pr_url.match(/\/pull\/(\d+)/);
+    if (!prMatch) return res.status(400).json({ error: 'Cannot parse PR number' });
+
+    await github.addPRComment(repoPath, parseInt(prMatch[1]), comment);
+    res.json({ success: true });
+  } catch (error: any) {
+    console.error('Error adding PR comment:', error);
+    res.status(500).json({ error: error.message || 'Failed to add comment' });
   }
 });
 
