@@ -2,6 +2,12 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "name": "postgres",
+      "runtimeExecutable": "/bin/sh",
+      "runtimeArgs": ["-c", "export PATH=/usr/local/bin:$PATH && cd /Users/colbyblair/code/blair_tech_works/ai-studio && docker compose -f docker/docker-compose.dev.yml up postgres 2>&1"],
+      "port": 5432
+    },
+    {
       "name": "orchestrator",
       "runtimeExecutable": "/bin/sh",
       "runtimeArgs": ["-c", "export PATH=/usr/local/bin:$PATH && cd /Users/colbyblair/code/blair_tech_works/ai-studio && npm run dev:orchestrator"],

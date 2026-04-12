@@ -6,8 +6,11 @@ import {
   fetchAgents,
   fetchTasks,
   fetchMessages,
+  createPRD,
   publishPRD,
   overridePRD,
+  acceptPRD,
+  rejectPRD,
   submitPRDApproval,
   sendMessage,
   startAgent,
@@ -40,6 +43,11 @@ export default function PRDsPage() {
   const [repoUrl, setRepoUrl] = useState('');
   const [publishError, setPublishError] = useState<string | null>(null);
   const [publishLoading, setPublishLoading] = useState(false);
+
+  // Copy flow state
+  const [copyingId, setCopyingId] = useState<string | null>(null);
+  const [copyTitle, setCopyTitle] = useState('');
+  const [copyLoading, setCopyLoading] = useState(false);
 
   // Task message expansion
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
@@ -105,18 +113,20 @@ export default function PRDsPage() {
   const reviewStatus = (approval: PRDApproval) => {
     const agent = agentById(approval.agent_id);
     const agentStatus = agent?.status || 'idle';
+    const isConnected = agent?.connected ?? false;
     const wasRepliedTo = repliedAgents.has(approval.agent_id);
 
     if (approval.status === 'approved') return { label: 'Approved', color: 'bg-green-500/20 text-green-400 border-green-500/50', icon: '✓' };
     if (approval.status === 'questions') {
-      if (agentStatus === 'active') return { label: 'Re-reviewing...', color: 'bg-blue-500/20 text-blue-400 border-blue-500/50', icon: '◉', pulse: true };
+      if (isConnected) return { label: 'Re-reviewing...', color: 'bg-blue-500/20 text-blue-400 border-blue-500/50', icon: '◉', pulse: true };
       return { label: 'Has Questions', color: 'bg-yellow-500/20 text-yellow-400 border-yellow-500/50', icon: '?' };
     }
     if (approval.status === 'overridden') return { label: 'Overridden', color: 'bg-purple-500/20 text-purple-400 border-purple-500/50', icon: '⏭' };
 
-    // pending — check agent process state + whether we replied
-    if (agentStatus === 'active' && wasRepliedTo) return { label: 'Re-reviewing...', color: 'bg-blue-500/20 text-blue-400 border-blue-500/50', icon: '◉', pulse: true };
-    if (agentStatus === 'active') return { label: 'Reviewing...', color: 'bg-blue-500/20 text-blue-400 border-blue-500/50', icon: '◉', pulse: true };
+    // pending — check connection state
+    if (isConnected && wasRepliedTo) return { label: 'Re-reviewing...', color: 'bg-blue-500/20 text-blue-400 border-blue-500/50', icon: '◉', pulse: true };
+    if (isConnected) return { label: 'Reviewing...', color: 'bg-blue-500/20 text-blue-400 border-blue-500/50', icon: '◉', pulse: true };
+    if (agentStatus === 'active' && !isConnected) return { label: 'Disconnected', color: 'bg-orange-500/20 text-orange-400 border-orange-500/50', icon: '⊘' };
     if (agentStatus === 'error') return { label: 'Agent Crashed', color: 'bg-red-500/20 text-red-400 border-red-500/50', icon: '✕' };
     if (wasRepliedTo) return { label: 'Reply Sent', color: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/50', icon: '↩' };
 
@@ -182,6 +192,30 @@ export default function PRDsPage() {
       }
     } catch (err) {
       console.error('Failed to override PRD:', err);
+    }
+  };
+
+  // Copy PRD
+  const handleCopyClick = (prd: PRD, e: React.MouseEvent) => {
+    e.stopPropagation();
+    setCopyingId(prd.id);
+    setCopyTitle(prd.title + ' (Copy)');
+  };
+
+  const handleCopyConfirm = async () => {
+    if (!copyingId || !copyTitle.trim()) return;
+    setCopyLoading(true);
+    try {
+      const source = await fetchPRDById(copyingId);
+      await createPRD({ title: copyTitle.trim(), content: source.content, status: 'draft' });
+      setCopyingId(null);
+      setCopyTitle('');
+      const data = await fetchPRDs();
+      setPRDs(data);
+    } catch (err) {
+      console.error('Failed to copy PRD:', err);
+    } finally {
+      setCopyLoading(false);
     }
   };
 
@@ -309,14 +343,14 @@ export default function PRDsPage() {
     <div className="p-8">
       <div className="mb-8 flex items-start justify-between">
         <div>
-          <h1 className="text-4xl font-bold text-white mb-2">PRDs</h1>
-          <p className="text-gray-400">Product Requirements Documents</p>
+          <h1 className="text-4xl font-bold text-white mb-2">Products</h1>
+          <p className="text-gray-400">Product Requirements &amp; Development</p>
         </div>
         <Link
           href="/prds/new"
           className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors"
         >
-          + Create PRD
+          + New Product
         </Link>
       </div>
 
@@ -340,7 +374,7 @@ export default function PRDsPage() {
       ) : (
         <div className="space-y-3">
           {filteredPRDs.length === 0 ? (
-            <div className="card"><p className="text-gray-400 text-center py-8">No PRDs found</p></div>
+            <div className="card"><p className="text-gray-400 text-center py-8">No products yet</p></div>
           ) : (
             filteredPRDs.map((prd) => (
               <div
@@ -365,6 +399,14 @@ export default function PRDsPage() {
                     <span className={`px-2 py-1 rounded text-xs font-medium border ${statusColors[prd.status]}`}>
                       {prd.status}
                     </span>
+                    {copyingId !== prd.id && (
+                      <button
+                        onClick={(e) => handleCopyClick(prd, e)}
+                        className="px-2 py-1 bg-dark-border text-gray-400 rounded text-xs hover:text-white hover:bg-dark-card"
+                      >
+                        Copy
+                      </button>
+                    )}
                     {prd.status === 'draft' && publishingId !== prd.id && (
                       <button
                         onClick={(e) => handlePublishClick(prd.id, e)}
@@ -385,22 +427,86 @@ export default function PRDsPage() {
                       const prdTasks = tasks.filter(t => t.prd_id === prd.id);
                       const pmAgent = agents.find(a => a.name === 'pm');
                       const pmActive = pmAgent?.status === 'active';
-                      return prdTasks.length > 0 ? (
-                        <Link
-                          href="/tasks"
-                          onClick={(e) => e.stopPropagation()}
-                          className="px-2 py-1 bg-green-500/20 text-green-400 border border-green-500/30 rounded text-xs hover:bg-green-500/30"
-                        >
-                          {prdTasks.filter(t => t.status === 'done').length}/{prdTasks.length} tasks
-                        </Link>
-                      ) : pmActive ? (
-                        <span className="px-2 py-1 bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded text-xs animate-pulse">
-                          Decomposing...
-                        </span>
-                      ) : null;
+                      const allDone = prdTasks.length > 0 && prdTasks.every(t => t.status === 'done');
+                      return (
+                        <>
+                          {prdTasks.length > 0 ? (
+                            <span className="px-2 py-1 bg-green-500/20 text-green-400 border border-green-500/30 rounded text-xs">
+                              {prdTasks.filter(t => t.status === 'done').length}/{prdTasks.length} tasks
+                            </span>
+                          ) : pmActive ? (
+                            <span className="px-2 py-1 bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded text-xs animate-pulse">
+                              Decomposing...
+                            </span>
+                          ) : null}
+                          {allDone && (
+                            <>
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  await acceptPRD(prd.id);
+                                  const data = await fetchPRDs();
+                                  setPRDs(data);
+                                }}
+                                className="px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600"
+                              >
+                                Accept
+                              </button>
+                              <button
+                                onClick={async (e) => {
+                                  e.stopPropagation();
+                                  const reason = prompt('Rejection reason (optional):');
+                                  await rejectPRD(prd.id, reason || undefined);
+                                  const data = await fetchPRDs();
+                                  setPRDs(data);
+                                }}
+                                className="px-2 py-1 bg-red-500/20 text-red-400 border border-red-500/30 rounded text-xs hover:bg-red-500/30"
+                              >
+                                Reject
+                              </button>
+                            </>
+                          )}
+                        </>
+                      );
                     })()}
+                    {prd.metadata?.queued && (
+                      <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 rounded text-xs">
+                        Queued
+                      </span>
+                    )}
                   </div>
                 </div>
+
+                {/* Copy flow: title input */}
+                {copyingId === prd.id && (
+                  <div className="mt-3 p-3 bg-dark-bg rounded border border-dark-border">
+                    <p className="text-sm text-gray-300 mb-2">New title for the copy:</p>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={copyTitle}
+                        onChange={(e) => setCopyTitle(e.target.value)}
+                        className="flex-1 bg-dark-card border border-dark-border rounded px-3 py-1.5 text-sm text-gray-200 focus:outline-none focus:border-blue-500"
+                        autoFocus
+                        onClick={(e) => e.stopPropagation()}
+                        onKeyDown={(e) => e.key === 'Enter' && handleCopyConfirm()}
+                      />
+                      <button
+                        onClick={(e) => { e.stopPropagation(); handleCopyConfirm(); }}
+                        disabled={!copyTitle.trim() || copyLoading}
+                        className="px-3 py-1.5 bg-blue-500 text-white rounded text-sm hover:bg-blue-600 disabled:opacity-40"
+                      >
+                        {copyLoading ? 'Copying...' : 'Create Copy'}
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setCopyingId(null); }}
+                        className="px-3 py-1.5 bg-dark-border text-gray-400 rounded text-sm hover:text-white"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                )}
 
                 {/* Publish flow: repo URL input */}
                 {publishingId === prd.id && (
@@ -630,9 +736,14 @@ export default function PRDsPage() {
                                           <span className="text-xs text-gray-200 truncate">{task.title}</span>
                                         </div>
                                         <div className="flex items-center gap-2 shrink-0 ml-2">
-                                          {assignedAgent && (
-                                            <span className="text-[10px] text-gray-500">{assignedAgent.name}</span>
-                                          )}
+                                          {assignedAgent && (<>
+                                            {assignedAgent.connected ? (
+                                              <span className="text-[10px] animate-pulse text-green-400">⚡</span>
+                                            ) : (
+                                              <span className="text-[10px] text-gray-600">⏸</span>
+                                            )}
+                                            <span className={`text-[10px] ${assignedAgent.connected ? 'text-gray-400' : 'text-gray-600'}`}>{assignedAgent.name}</span>
+                                          </>)}
                                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${taskStatusColors[task.status] || taskStatusColors.backlog}`}>
                                             {task.status.replace('_', ' ')}
                                           </span>

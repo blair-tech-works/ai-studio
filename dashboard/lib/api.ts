@@ -15,6 +15,7 @@ export interface Agent {
   pid?: number;
   worktree_path?: string;
   last_heartbeat?: string;
+  connected?: boolean;
 }
 
 export interface Task {
@@ -326,6 +327,24 @@ export async function overridePRD(id: string): Promise<PRD> {
   });
   if (!res.ok) throw new Error('Failed to override PRD');
   return res.json();
+}
+
+export async function acceptPRD(id: string): Promise<{ prd: PRD; nextQueued: string | null }> {
+  const res = await fetch(`/api/prds/${id}/accept`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' }
+  });
+  if (!res.ok) throw new Error('Failed to accept PRD');
+  return res.json();
+}
+
+export async function rejectPRD(id: string, reason?: string): Promise<void> {
+  const res = await fetch(`/api/prds/${id}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason })
+  });
+  if (!res.ok) throw new Error('Failed to reject PRD');
 }
 
 export async function createEvoRecommendation(data: { title: string; description: string; category: string; priority?: string; principles_referenced?: string[] }): Promise<EvoRecommendation> {

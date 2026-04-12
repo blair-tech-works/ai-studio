@@ -11,7 +11,12 @@ router.get('/', async (req: Request, res: Response) => {
        FROM agents
        ORDER BY created_at DESC`
     );
-    res.json(result.rows);
+    const lifecycleManager = req.app.get('lifecycleManager');
+    const rows = result.rows.map((row: any) => ({
+      ...row,
+      connected: lifecycleManager?.isConnected(row.name) ?? false,
+    }));
+    res.json(rows);
   } catch (error) {
     console.error('Error fetching agents:', error);
     res.status(500).json({ error: 'Failed to fetch agents' });
@@ -33,7 +38,9 @@ router.get('/:name', async (req: Request, res: Response) => {
       return res.status(404).json({ error: 'Agent not found' });
     }
 
-    res.json(result.rows[0]);
+    const lifecycleManager = req.app.get('lifecycleManager');
+    const row = result.rows[0];
+    res.json({ ...row, connected: lifecycleManager?.isConnected(row.name) ?? false });
   } catch (error) {
     console.error('Error fetching agent:', error);
     res.status(500).json({ error: 'Failed to fetch agent' });
@@ -99,18 +106,24 @@ router.post('/:name/start', async (req: Request, res: Response) => {
       return res.status(500).json({ error: 'Lifecycle manager not available' });
     }
 
-    // Accept repoPath from body, or look up from the most recent PRD in review
+    // Accept repoPath and prdId from body, or look up from most recent active PRD
     let repoPath = req.body?.repoPath;
-    if (!repoPath) {
+    let prdId = req.body?.prdId;
+    if (!repoPath || !prdId) {
       const prdResult = await query(
-        `SELECT metadata FROM prds WHERE status IN ('review', 'approved', 'active') ORDER BY updated_at DESC LIMIT 1`
+        `SELECT id, metadata FROM prds WHERE status IN ('review', 'approved', 'active') ORDER BY updated_at DESC LIMIT 1`
       );
-      if (prdResult.rows.length > 0 && prdResult.rows[0].metadata?.repoPath) {
-        repoPath = prdResult.rows[0].metadata.repoPath;
+      if (prdResult.rows.length > 0) {
+        if (!repoPath) repoPath = prdResult.rows[0].metadata?.repoPath;
+        if (!prdId) prdId = prdResult.rows[0].id;
       }
     }
 
-    await lifecycleManager.startAgent(name, repoPath);
+    if (!repoPath || !prdId) {
+      return res.status(400).json({ error: 'No active PRD found. Cannot start agent without a PRD context.' });
+    }
+
+    await lifecycleManager.startAgent(name, repoPath, prdId);
     res.json({ success: true, message: `Agent '${name}' started` });
   } catch (error) {
     console.error('Error starting agent:', error);

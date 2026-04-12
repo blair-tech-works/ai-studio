@@ -39,8 +39,8 @@ function callClaude(userPrompt: string, systemPrompt: string): Promise<string> {
           delete env.ANTHROPIC_API_KEY;
           return env;
         })(),
-        timeout: 120000,
-        maxBuffer: 1024 * 1024,
+        timeout: 180000,
+        maxBuffer: 5 * 1024 * 1024,
       },
       (error, stdout, stderr) => {
         // Clean up temp files
@@ -55,6 +55,26 @@ function callClaude(userPrompt: string, systemPrompt: string): Promise<string> {
       }
     );
   });
+}
+
+// Helper: save initial PRD draft to tmp/prds/ (pre-repo backup, before git commit)
+// Once published, the PRD lives in the target git repo as PRD.md and in the database.
+function saveDraftPRDToDisk(title: string, content: string, id: string): string {
+  const projectRoot = resolve(__dirname, '..', '..', '..');
+  const prdsDir = join(projectRoot, 'tmp', 'prds');
+  if (!existsSync(prdsDir)) mkdirSync(prdsDir, { recursive: true });
+
+  const slug = title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-|-$/g, '')
+    .slice(0, 60);
+  const filename = `DRAFT-${slug}-${id.slice(0, 8)}.md`;
+  const filepath = join(prdsDir, filename);
+
+  writeFileSync(filepath, content);
+  console.log(`Draft PRD saved to disk: ${filepath}`);
+  return filepath;
 }
 
 // GET /api/prds - list PRDs
@@ -102,7 +122,12 @@ router.post('/', async (req: Request, res: Response) => {
       [id, title, content, prd_status, version]
     );
 
-    res.status(201).json(result.rows[0]);
+    // Save draft PRD to disk (pre-repo backup)
+    const filepath = saveDraftPRDToDisk(title, content, id);
+    const prd = result.rows[0];
+    prd.filepath = filepath;
+
+    res.status(201).json(prd);
   } catch (error) {
     console.error('Error creating PRD:', error);
     res.status(500).json({ error: 'Failed to create PRD' });
@@ -324,6 +349,42 @@ router.post('/:id/publish', async (req: Request, res: Response) => {
       } catch {}
     }
 
+    // Copy PRD markdown into the repo and commit+push
+    try {
+      const prdRow = await query('SELECT title, content FROM prds WHERE id = $1', [id]);
+      if (prdRow.rows.length > 0) {
+        const prdContent = prdRow.rows[0].content;
+        const prdTitle = prdRow.rows[0].title;
+        const prdFilename = 'PRD.md';
+        writeFileSync(join(repoPath, prdFilename), prdContent);
+        execSync(`git -C "${repoPath}" add "${prdFilename}"`, { stdio: 'pipe' });
+        execSync(`git -C "${repoPath}" commit -m "Add PRD: ${prdTitle.replace(/"/g, '\\"')}"`, {
+          stdio: 'pipe',
+          env: gitEnv,
+        });
+        try {
+          execSync(`git -C "${repoPath}" push origin main`, { stdio: 'pipe', env: gitEnv, timeout: 30000 });
+        } catch {}
+        console.log(`PRD committed to repo: ${repoPath}/${prdFilename}`);
+      }
+    } catch (err: any) {
+      console.error('Failed to commit PRD to repo:', err.message);
+    }
+
+    // Concurrency check: how many PRDs are actively using agent slots?
+    const concurrencyLimit = parseInt(process.env.MAX_CONCURRENT_PRDS || '1');
+    const activeResult = await query(`SELECT COUNT(*) as active FROM prds WHERE status = 'active'`);
+    const activePRDs = parseInt(activeResult.rows[0].active);
+
+    if (activePRDs >= concurrencyLimit) {
+      // Queue this PRD — store repo info but don't start agents
+      await query(
+        `UPDATE prds SET metadata = metadata || $1::jsonb, updated_at = NOW() WHERE id = $2`,
+        [JSON.stringify({ repoUrl, repoPath, queued: true }), id]
+      );
+      return res.json({ queued: true, message: `${activePRDs} PRD(s) currently active (limit: ${concurrencyLimit}). This PRD is queued.` });
+    }
+
     // Update PRD status and store repo info in metadata
     const prdResult = await query(
       `UPDATE prds
@@ -365,7 +426,7 @@ router.post('/:id/publish', async (req: Request, res: Response) => {
         try {
           // Stop if already running
           try { await lifecycleManager.stopAgent(agent.name); } catch {}
-          await lifecycleManager.startAgent(agent.name, repoPath);
+          await lifecycleManager.startAgent(agent.name, repoPath, id);
         } catch (err: any) {
           console.error(`Failed to start agent '${agent.name}':`, err.message);
         }
@@ -509,6 +570,85 @@ router.post('/:id/override', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error overriding approvals:', error);
     res.status(500).json({ error: 'Failed to override approvals' });
+  }
+});
+
+// POST /api/prds/:id/accept — human accepts completed PRD, frees concurrency slot
+router.post('/:id/accept', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+
+    // Get PRD info
+    const prdResult = await query('SELECT * FROM prds WHERE id = $1', [id]);
+    if (prdResult.rows.length === 0) return res.status(404).json({ error: 'PRD not found' });
+
+    // Kill all agents for this PRD
+    const lifecycleManager = req.app.get('lifecycleManager');
+    if (lifecycleManager) {
+      await lifecycleManager.stopAgentsForPRD(id);
+    }
+
+    // Mark PRD as completed
+    const result = await query(
+      `UPDATE prds SET status = 'completed', updated_at = NOW() WHERE id = $1 RETURNING *`,
+      [id]
+    );
+
+    // Check for queued PRDs and auto-start the next one
+    const queuedResult = await query(
+      `SELECT id, metadata FROM prds WHERE metadata->>'queued' = 'true' ORDER BY created_at ASC LIMIT 1`
+    );
+    let nextPRD = null;
+    if (queuedResult.rows.length > 0) {
+      nextPRD = queuedResult.rows[0];
+      // Clear queued flag and re-publish
+      await query(
+        `UPDATE prds SET metadata = metadata - 'queued', updated_at = NOW() WHERE id = $1`,
+        [nextPRD.id]
+      );
+      console.log(`Slot freed — auto-starting queued PRD ${nextPRD.id}`);
+    }
+
+    res.json({
+      prd: result.rows[0],
+      nextQueued: nextPRD ? nextPRD.id : null,
+    });
+  } catch (error: any) {
+    console.error('Error accepting PRD:', error);
+    res.status(500).json({ error: error.message || 'Failed to accept PRD' });
+  }
+});
+
+// POST /api/prds/:id/reject — human rejects, agents fix
+router.post('/:id/reject', async (req: Request, res: Response) => {
+  try {
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    // Keep PRD in active status — agents will create fix tasks
+    // Send a system message about the rejection
+    const prdResult = await query('SELECT title, metadata FROM prds WHERE id = $1', [id]);
+    if (prdResult.rows.length === 0) return res.status(404).json({ error: 'PRD not found' });
+
+    // Update metadata with rejection reason
+    await query(
+      `UPDATE prds SET metadata = metadata || $1::jsonb, updated_at = NOW() WHERE id = $2`,
+      [JSON.stringify({ rejected: true, rejectionReason: reason || 'Issues found' }), id]
+    );
+
+    // Restart QA agent to create FIX tasks
+    const lifecycleManager = req.app.get('lifecycleManager');
+    const repoPath = prdResult.rows[0].metadata?.repoPath;
+    if (lifecycleManager && repoPath) {
+      try {
+        await lifecycleManager.startAgent('qa', repoPath, id);
+      } catch {}
+    }
+
+    res.json({ success: true, message: 'PRD rejected — QA will create FIX tasks' });
+  } catch (error: any) {
+    console.error('Error rejecting PRD:', error);
+    res.status(500).json({ error: error.message || 'Failed to reject PRD' });
   }
 });
 

@@ -18,7 +18,23 @@
       "Bash(psql -h localhost -U ai_studio -d ai_studio -f /Users/colbyblair/code/blair_tech_works/ai-studio/db/migrations/001_initial_schema.sql)",
       "Bash(psql -h localhost -U ai_studio -d ai_studio -f /Users/colbyblair/code/blair_tech_works/ai-studio/db/migrations/002_seed_agents.sql)",
       "Bash(curl -s http://localhost:3001/api/agents)",
-      "Bash(curl -s -N --max-time 3 http://localhost:3001/api/events)"
+      "Bash(curl -s -N --max-time 3 http://localhost:3001/api/events)",
+      "Bash(docker compose:*)",
+      "Bash(open -a Docker)",
+      "Bash(docker ps:*)",
+      "Bash(psql -h localhost -U ai_studio -d ai_studio -c \"SELECT name, status FROM agents ORDER BY name;\")",
+      "Bash(PGPASSWORD=ai_studio psql -h localhost -U ai_studio -d ai_studio -c \"SELECT name, status FROM agents ORDER BY name;\")",
+      "Bash(pg_ctl -D /Users/colbyblair/code/blair_tech_works/ai-studio/tmp/pgdata stop)",
+      "Bash(docker start:*)",
+      "Bash(curl -s -X POST http://localhost:3001/api/prds/drafting -H \"Content-Type: application/json\" -d '{\"\"messages\"\": [{\"\"role\"\": \"\"human\"\", \"\"content\"\": \"\"test\"\"}], \"\"phase\"\": \"\"brainstorm\"\"}')",
+      "Bash(ANTHROPIC_API_KEY=\"\" npx -y @anthropic-ai/claude-code -p --model sonnet --no-session-persistence)",
+      "Bash(curl -s http://localhost:3001/api/status)",
+      "Bash(curl -s -X POST http://localhost:3001/api/prds/drafting -H \"Content-Type: application/json\" -d '{\"\"messages\"\":[{\"\"role\"\":\"\"human\"\",\"\"content\"\":\"\"hi\"\"}],\"\"phase\"\":\"\"brainstorm\"\"}')",
+      "Bash(curl -s http://localhost:3001/api/tasks)",
+      "Bash(cat /Users/colbyblair/code/blair_tech_works/ai-studio/tmp/logs/*.log)",
+      "Bash(curl -s -X POST \"http://localhost:3001/api/tasks/TASK-025/create-pr\" -H \"Content-Type: application/json\" -d '{\"\"agent_name\"\":\"\"frontend-dev\"\",\"\"title\"\":\"\"test\"\",\"\"body\"\":\"\"test\"\"}')",
+      "Bash(python3 -c \"import sys,json; [print\\(t[''''external_id''''], t[''''status'''']\\) for t in json.load\\(sys.stdin\\)[:5]]\")",
+      "Bash(curl -s -X POST \"http://localhost:3001/api/tasks/TASK-005/create-pr\" -H \"Content-Type: application/json\" -d '{\"\"agent_name\"\":\"\"frontend-dev\"\",\"\"title\"\":\"\"test\"\",\"\"body\"\":\"\"test\"\"}')"
     ]
   }
 }

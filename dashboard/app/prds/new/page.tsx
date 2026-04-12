@@ -12,6 +12,37 @@ import {
 
 type Phase = 'brainstorm' | 'grilling' | 'synthesizing' | 'review';
 
+const STORAGE_KEY = 'ai-studio-prd-drafting-session';
+
+interface SavedSession {
+  phase: Phase;
+  brainDump: string;
+  messages: DraftingMessage[];
+  suggestsFinalize: boolean;
+  prdTitle: string;
+  prdContent: string;
+  grade: PRDGrade | null;
+  savedAt: string;
+}
+
+function saveSession(data: Omit<SavedSession, 'savedAt'>) {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...data, savedAt: new Date().toISOString() }));
+  } catch {}
+}
+
+function loadSession(): SavedSession | null {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    return JSON.parse(raw);
+  } catch { return null; }
+}
+
+function clearSession() {
+  try { localStorage.removeItem(STORAGE_KEY); } catch {}
+}
+
 export default function NewPRDPage() {
   const router = useRouter();
   const [phase, setPhase] = useState<Phase>('brainstorm');
@@ -21,6 +52,7 @@ export default function NewPRDPage() {
   const [loading, setLoading] = useState(false);
   const [suggestsFinalize, setSuggestsFinalize] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [resumed, setResumed] = useState(false);
 
   // Synthesis results
   const [prdTitle, setPrdTitle] = useState('');
@@ -29,6 +61,28 @@ export default function NewPRDPage() {
 
   const chatEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+
+  // Restore session from localStorage on mount
+  useEffect(() => {
+    const saved = loadSession();
+    if (saved && saved.messages.length > 0) {
+      setPhase(saved.phase === 'synthesizing' ? 'grilling' : saved.phase); // don't restore mid-synthesis
+      setBrainDump(saved.brainDump);
+      setMessages(saved.messages);
+      setSuggestsFinalize(saved.suggestsFinalize);
+      setPrdTitle(saved.prdTitle);
+      setPrdContent(saved.prdContent);
+      setGrade(saved.grade);
+      setResumed(true);
+    }
+  }, []);
+
+  // Save session on every meaningful state change
+  useEffect(() => {
+    if (messages.length > 0 || phase !== 'brainstorm') {
+      saveSession({ phase, brainDump, messages, suggestsFinalize, prdTitle, prdContent, grade });
+    }
+  }, [phase, messages, suggestsFinalize, prdTitle, prdContent, grade, brainDump]);
 
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -110,6 +164,7 @@ export default function NewPRDPage() {
         content: prdContent,
         status: 'draft',
       });
+      clearSession();
       router.push('/prds');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to save PRD');
@@ -156,6 +211,29 @@ export default function NewPRDPage() {
           {phase === 'review' && 'Review your synthesized PRD and its coverage grade.'}
         </p>
       </div>
+
+      {/* Session restored banner */}
+      {resumed && (
+        <div className="mb-4 p-3 bg-blue-500/10 border border-blue-500/30 rounded flex items-center justify-between">
+          <p className="text-sm text-blue-400">Session restored from where you left off.</p>
+          <button
+            onClick={() => {
+              clearSession();
+              setPhase('brainstorm');
+              setBrainDump('');
+              setMessages([]);
+              setSuggestsFinalize(false);
+              setPrdTitle('');
+              setPrdContent('');
+              setGrade(null);
+              setResumed(false);
+            }}
+            className="text-xs text-gray-400 hover:text-white px-2 py-1 bg-dark-border rounded"
+          >
+            Start Fresh
+          </button>
+        </div>
+      )}
 
       {error && (
         <div className="mb-4 p-3 bg-red-500/10 border border-red-500/50 rounded text-red-400 text-sm">

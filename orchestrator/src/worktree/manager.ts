@@ -55,7 +55,58 @@ export class WorktreeManager {
       }
     }
 
+    // Inject pre-push hook to block direct pushes to main/master
+    this._installPushGuard(worktreePath);
+
     return worktreePath;
+  }
+
+  /**
+   * Install a git pre-push hook that rejects pushes to main/master.
+   * Agents must use the PR endpoints instead.
+   */
+  private _installPushGuard(worktreePath: string): void {
+    // In worktrees, .git is a file (not a directory) pointing to the main repo.
+    // We need to find the actual git dir to install hooks.
+    const dotGit = path.join(worktreePath, '.git');
+    let hooksDir: string;
+
+    try {
+      const stat = fs.statSync(dotGit);
+      if (stat.isFile()) {
+        // Worktree — .git is a file like "gitdir: /path/to/main/.git/worktrees/name"
+        const content = fs.readFileSync(dotGit, 'utf-8').trim();
+        const gitDir = content.replace('gitdir: ', '');
+        hooksDir = path.join(gitDir, 'hooks');
+      } else {
+        hooksDir = path.join(dotGit, 'hooks');
+      }
+    } catch {
+      return; // Can't determine git dir, skip hook installation
+    }
+
+    if (!fs.existsSync(hooksDir)) {
+      fs.mkdirSync(hooksDir, { recursive: true });
+    }
+
+    const hookScript = `#!/bin/sh
+# AI Studio: Block direct pushes to main/master.
+# Agents must create PRs via the orchestrator API.
+
+while read local_ref local_sha remote_ref remote_sha
+do
+  branch=$(echo "$remote_ref" | sed 's|refs/heads/||')
+  if [ "$branch" = "main" ] || [ "$branch" = "master" ]; then
+    echo "ERROR: Direct push to '$branch' is blocked."
+    echo "Use the AI Studio PR workflow: POST /api/tasks/<id>/create-pr"
+    exit 1
+  fi
+done
+exit 0
+`;
+
+    const hookPath = path.join(hooksDir, 'pre-push');
+    fs.writeFileSync(hookPath, hookScript, { mode: 0o755 });
   }
 
   async removeWorktree(agentName: string): Promise<void> {

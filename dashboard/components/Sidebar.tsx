@@ -7,10 +7,10 @@ export default function Sidebar() {
   const pathname = usePathname();
 
   const navItems = [
+    { href: '/prds', label: 'Products', icon: '📦' },
     { href: '/', label: 'Dashboard', icon: '📊' },
     { href: '/tasks', label: 'Tasks', icon: '✓' },
     { href: '/messages', label: 'Messages', icon: '💬' },
-    { href: '/prds', label: 'PRDs', icon: '📄' },
     { href: '/kb', label: 'Knowledge Base', icon: '📚' },
     { href: '/evo', label: 'EVO', icon: '🚀' },
     { href: '/settings', label: 'Settings', icon: '⚙' }

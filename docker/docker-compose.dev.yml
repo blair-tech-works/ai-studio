@@ -1,24 +1,23 @@
-version: '3.8'
+# Dev-only: just PostgreSQL with persistent local storage
+# Usage: docker compose -f docker/docker-compose.dev.yml up -d
+# Data persists in ai-studio/data/pg/ (gitignored)
 
 services:
-  orchestrator:
-    image: node:22-alpine
-    working_dir: /app
-    command: npm run dev
-    volumes:
-      - ../orchestrator:/app
-      - /app/node_modules
+  postgres:
+    image: postgres:16-alpine
+    container_name: ai-studio-db
     environment:
-      DATABASE_URL: postgresql://ai_studio:ai_studio@postgres:5432/ai_studio
-      PORT: "3001"
-      AGENTS_CONFIG_PATH: /agents
-      TARGET_REPO_PATH: /target-project
-      CLAUDE_CLI_PATH: claude
-
-  dashboard:
-    image: node:22-alpine
-    working_dir: /app
-    command: npm run dev
+      POSTGRES_USER: ai_studio
+      POSTGRES_PASSWORD: ai_studio
+      POSTGRES_DB: ai_studio
+    ports:
+      - "5432:5432"
     volumes:
-      - ../dashboard:/app
-      - /app/node_modules
+      - ../data/pg:/var/lib/postgresql/data
+      - ../db/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ai_studio"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped

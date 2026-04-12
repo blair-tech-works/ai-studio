@@ -102,16 +102,12 @@ router.get('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const result = await query(
-      `SELECT * FROM tasks WHERE id = $1 OR external_id = $2`,
-      [id, id]
-    );
-
-    if (result.rows.length === 0) {
+    const task = await findTask(id);
+    if (!task) {
       return res.status(404).json({ error: 'Task not found' });
     }
 
-    res.json(result.rows[0]);
+    res.json(task);
   } catch (error) {
     console.error('Error fetching task:', error);
     res.status(500).json({ error: 'Failed to fetch task' });
@@ -129,6 +125,15 @@ router.patch('/:id', async (req: Request, res: Response) => {
     let paramCount = 1;
 
     if (status !== undefined) {
+      // Enforce: can't mark as "done" without a PR (QA merges via /merge-pr endpoint)
+      if (status === 'done') {
+        const task = await findTask(id);
+        if (task && !task.pr_url && !pr_url) {
+          return res.status(400).json({
+            error: 'Cannot mark task as done without a PR. Use POST /api/tasks/:id/create-pr first, then QA merges via POST /api/tasks/:id/merge-pr.',
+          });
+        }
+      }
       updates.push(`status = $${paramCount++}`);
       values.push(status);
     }
@@ -162,12 +167,13 @@ router.patch('/:id', async (req: Request, res: Response) => {
     }
 
     updates.push(`updated_at = NOW()`);
-    values.push(id, id);
+    const w = taskWhereClause(id);
+    values.push(w.param);
 
     const result = await query(
       `UPDATE tasks
        SET ${updates.join(', ')}
-       WHERE id = $${paramCount} OR external_id = $${paramCount + 1}
+       WHERE ${w.sql.replace('$1', `$${paramCount}`)}
        RETURNING *`,
       values
     );
@@ -184,11 +190,26 @@ router.patch('/:id', async (req: Request, res: Response) => {
 });
 
 // Helper: get repo path from the task's PRD metadata
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function taskWhereClause(id: string): { sql: string; param: string } {
+  return UUID_RE.test(id)
+    ? { sql: 'id = $1', param: id }
+    : { sql: 'external_id = $1', param: id };
+}
+
+async function findTask(id: string) {
+  const w = taskWhereClause(id);
+  const result = await query(`SELECT * FROM tasks WHERE ${w.sql}`, [w.param]);
+  return result.rows[0] || null;
+}
+
 async function getRepoPath(taskId: string): Promise<string | null> {
+  const isUUID = UUID_RE.test(taskId);
   const result = await query(
-    `SELECT p.metadata FROM tasks t
-     JOIN prds p ON t.prd_id = p.id
-     WHERE t.id = $1 OR t.external_id = $1`,
+    isUUID
+      ? `SELECT p.metadata FROM tasks t JOIN prds p ON t.prd_id = p.id WHERE t.id = $1`
+      : `SELECT p.metadata FROM tasks t JOIN prds p ON t.prd_id = p.id WHERE t.external_id = $1`,
     [taskId]
   );
   return result.rows[0]?.metadata?.repoPath || null;
@@ -201,9 +222,8 @@ router.post('/:id/create-pr', async (req: Request, res: Response) => {
     const { title, body } = req.body;
 
     // Get task
-    const taskResult = await query('SELECT * FROM tasks WHERE id = $1 OR external_id = $1', [id]);
-    if (taskResult.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
-    const task = taskResult.rows[0];
+    const task = await findTask(id);
+    if (!task) return res.status(404).json({ error: 'Task not found' });
 
     const repoPath = await getRepoPath(id);
     if (!repoPath) return res.status(400).json({ error: 'No repo path found for this task' });
@@ -233,9 +253,8 @@ router.post('/:id/merge-pr', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const taskResult = await query('SELECT * FROM tasks WHERE id = $1 OR external_id = $1', [id]);
-    if (taskResult.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
-    const task = taskResult.rows[0];
+    const task = await findTask(id);
+    if (!task) return res.status(404).json({ error: 'Task not found' });
 
     if (!task.pr_url) return res.status(400).json({ error: 'Task has no PR' });
 
@@ -267,9 +286,8 @@ router.get('/:id/pr-diff', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
-    const taskResult = await query('SELECT * FROM tasks WHERE id = $1 OR external_id = $1', [id]);
-    if (taskResult.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
-    const task = taskResult.rows[0];
+    const task = await findTask(id);
+    if (!task) return res.status(404).json({ error: 'Task not found' });
 
     if (!task.pr_url) return res.status(400).json({ error: 'Task has no PR' });
 
@@ -295,9 +313,8 @@ router.post('/:id/pr-comment', async (req: Request, res: Response) => {
 
     if (!comment) return res.status(400).json({ error: 'comment is required' });
 
-    const taskResult = await query('SELECT * FROM tasks WHERE id = $1 OR external_id = $1', [id]);
-    if (taskResult.rows.length === 0) return res.status(404).json({ error: 'Task not found' });
-    const task = taskResult.rows[0];
+    const task = await findTask(id);
+    if (!task) return res.status(404).json({ error: 'Task not found' });
 
     if (!task.pr_url) return res.status(400).json({ error: 'Task has no PR' });
 
@@ -320,11 +337,10 @@ router.delete('/:id', async (req: Request, res: Response) => {
   try {
     const { id } = req.params;
 
+    const w = taskWhereClause(id);
     const result = await query(
-      `DELETE FROM tasks
-       WHERE id = $1 OR external_id = $2
-       RETURNING *`,
-      [id, id]
+      `DELETE FROM tasks WHERE ${w.sql} RETURNING *`,
+      [w.param]
     );
 
     if (result.rows.length === 0) {

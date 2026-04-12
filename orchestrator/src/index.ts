@@ -43,6 +43,27 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
+// Root route
+app.get('/', (req: Request, res: Response) => {
+  res.json({
+    name: 'AI Studio Orchestrator',
+    version: '1.0.0',
+    status: 'running',
+    api: '/api',
+    docs: {
+      agents: 'GET /api/agents',
+      tasks: 'GET /api/tasks',
+      prds: 'GET /api/prds',
+      messages: 'GET /api/messages',
+      kb: 'GET /api/kb',
+      evo: 'GET /api/evo/recommendations',
+      events: 'GET /api/events (SSE)',
+      settings: 'GET /api/settings/integrations',
+      status: 'GET /api/status',
+    },
+  });
+});
+
 // Mount API router
 app.use('/api', apiRouter);
 
@@ -66,6 +87,9 @@ const gracefulShutdown = async (signal: string) => {
   console.log(`\n${signal} received. Shutting down gracefully...`);
 
   try {
+    // Stop health monitor
+    lifecycleManager.stopHealthMonitor();
+
     // Stop all agents
     await lifecycleManager.stopAll();
     console.log('All agents stopped');
@@ -117,6 +141,9 @@ API Endpoints (see agents.ts and other routers for full endpoint list):
 
 Type 'ctrl+c' to shutdown.
 `);
+
+  // Start the agent health monitor (detects disconnects, auto-recovers)
+  lifecycleManager.startHealthMonitor();
 });
 
 // Export for testing

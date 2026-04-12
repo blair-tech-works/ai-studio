@@ -58,4 +58,20 @@ router.get('/integrations', async (req: Request, res: Response) => {
   res.json(integrations);
 });
 
+// GET /api/settings/concurrency — get max concurrent PRDs
+router.get('/concurrency', (req: Request, res: Response) => {
+  const limit = parseInt(process.env.MAX_CONCURRENT_PRDS || '1');
+  res.json({ limit });
+});
+
+// PUT /api/settings/concurrency — set max concurrent PRDs
+router.put('/concurrency', (req: Request, res: Response) => {
+  const { limit } = req.body;
+  if (!limit || limit < 1 || limit > 10) {
+    return res.status(400).json({ error: 'Limit must be between 1 and 10' });
+  }
+  process.env.MAX_CONCURRENT_PRDS = String(limit);
+  res.json({ limit, message: `Concurrency limit set to ${limit}` });
+});
+
 export default router;

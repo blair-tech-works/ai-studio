@@ -24,6 +24,28 @@ export default function SettingsPage() {
   const [integrations, setIntegrations] = useState<Integrations | null>(null);
   const [loading, setLoading] = useState(true);
   const [checking, setChecking] = useState(false);
+  const [concurrency, setConcurrency] = useState(1);
+
+  const loadConcurrency = async () => {
+    try {
+      const res = await fetch('/api/settings/concurrency');
+      if (res.ok) {
+        const data = await res.json();
+        setConcurrency(data.limit);
+      }
+    } catch {}
+  };
+
+  const saveConcurrency = async (limit: number) => {
+    try {
+      await fetch('/api/settings/concurrency', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ limit }),
+      });
+      setConcurrency(limit);
+    } catch {}
+  };
 
   const loadIntegrations = async () => {
     try {
@@ -41,6 +63,7 @@ export default function SettingsPage() {
 
   useEffect(() => {
     loadIntegrations();
+    loadConcurrency();
   }, []);
 
   const handleRefresh = () => {
@@ -127,6 +150,34 @@ export default function SettingsPage() {
                   {integrations.postgres.message}
                 </span>
               </div>
+            </div>
+          </div>
+
+          {/* Concurrency */}
+          <div className="card border border-dark-border rounded-lg p-5">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-3">
+                <span className="text-xl">🔄</span>
+                <h3 className="text-lg font-semibold text-white">Concurrent PRDs</h3>
+              </div>
+            </div>
+            <p className="text-sm text-gray-400 mb-3">
+              Maximum number of PRDs that can have active agent teams simultaneously.
+              Additional PRDs will be queued until a slot is freed.
+            </p>
+            <div className="flex items-center gap-3">
+              <input
+                type="number"
+                min={1}
+                max={10}
+                value={concurrency}
+                onChange={(e) => {
+                  const val = parseInt(e.target.value);
+                  if (val >= 1 && val <= 10) saveConcurrency(val);
+                }}
+                className="w-20 bg-dark-bg border border-dark-border rounded px-3 py-1.5 text-sm text-gray-200 text-center focus:outline-none focus:border-blue-500"
+              />
+              <span className="text-xs text-gray-500">1–10 (default: 1)</span>
             </div>
           </div>
 
