@@ -121,6 +121,34 @@ export class AgentLifecycleManager {
       const repoPath = prd.metadata?.repoPath;
       if (!repoPath) continue;
 
+      // Unblock tasks whose dependencies are now done
+      const blockedTasks = await query(
+        `SELECT t.id, t.external_id, t.description, a.name as agent_name FROM tasks t
+         JOIN agents a ON t.assigned_to = a.id
+         WHERE t.status = 'blocked' AND t.prd_id = $1`,
+        [prd.id]
+      );
+
+      for (const bt of blockedTasks.rows) {
+        // Check if all mentioned TASK-XXX dependencies are done
+        const depMatches = (bt.description || '').match(/TASK-\d+/g) || [];
+        if (depMatches.length > 0) {
+          const depResult = await query(
+            `SELECT COUNT(*) as total, COUNT(CASE WHEN status = 'done' THEN 1 END) as done
+             FROM tasks WHERE external_id = ANY($1)`,
+            [depMatches]
+          );
+          const { total, done } = depResult.rows[0];
+          const totalN = parseInt(total);
+          const doneN = parseInt(done);
+          // Unblock if all found deps are done, OR if deps reference tasks that don't exist (stale refs)
+          if (totalN === doneN) {
+            console.log(`Health check: unblocking ${bt.external_id} — all deps done (${doneN}/${depMatches.length} found)`);
+            await query(`UPDATE tasks SET status = 'todo' WHERE id = $1`, [bt.id]);
+          }
+        }
+      }
+
       // Check for todo/in_progress tasks assigned to agents that aren't connected
       const taskResult = await query(
         `SELECT DISTINCT a.name FROM tasks t

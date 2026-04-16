@@ -3,10 +3,12 @@
 import {
   fetchPRDs,
   fetchPRDById,
+  fetchAgentLogs,
   fetchAgents,
   fetchTasks,
   fetchMessages,
   createPRD,
+  updateTask,
   publishPRD,
   overridePRD,
   acceptPRD,
@@ -51,6 +53,8 @@ export default function PRDsPage() {
 
   // Task message expansion
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [showLogsForTask, setShowLogsForTask] = useState<string | null>(null);
+  const [agentLogs, setAgentLogs] = useState<string[]>([]);
 
   // Question resolution state
   const [replyingTo, setReplyingTo] = useState<string | null>(null); // agent_id
@@ -90,6 +94,30 @@ export default function PRDsPage() {
     }, 15000);
     return () => clearInterval(interval);
   }, [expandedId]);
+
+  // Poll agent logs when the logs section is open
+  useEffect(() => {
+    if (!showLogsForTask) { setAgentLogs([]); return; }
+
+    const task = tasks.find(t => t.id === showLogsForTask);
+    if (!task?.assigned_to) return;
+
+    const agent = agents.find(a => a.id === task.assigned_to);
+    if (!agent) return;
+
+    const prd = prds.find(p => p.id === task.prd_id);
+
+    const loadLogs = async () => {
+      try {
+        const data = await fetchAgentLogs(agent.name, prd?.id, 50);
+        setAgentLogs(data.lines);
+      } catch {}
+    };
+
+    loadLogs();
+    const interval = setInterval(loadLogs, 5000);
+    return () => clearInterval(interval);
+  }, [showLogsForTask, tasks, agents, prds]);
 
   const filteredPRDs =
     filter === 'all' ? prds : prds.filter((p) => p.status === filter);
@@ -745,8 +773,23 @@ export default function PRDsPage() {
                                             <span className={`text-[10px] ${assignedAgent.connected ? 'text-gray-400' : 'text-gray-600'}`}>{assignedAgent.name}</span>
                                           </>)}
                                           <span className={`px-1.5 py-0.5 rounded text-[10px] font-medium border ${taskStatusColors[task.status] || taskStatusColors.backlog}`}>
-                                            {task.status.replace('_', ' ')}
+                                            {task.status === 'review'
+                                              ? (agents.find(a => a.name === 'qa')?.connected ? 'QA reviewing' : 'awaiting QA')
+                                              : task.status.replace('_', ' ')}
                                           </span>
+                                          {task.status === 'blocked' && (
+                                            <button
+                                              onClick={async (e) => {
+                                                e.stopPropagation();
+                                                await updateTask(task.external_id || task.id, { status: 'todo' });
+                                                const [td, ad] = await Promise.all([fetchTasks(), fetchAgents()]);
+                                                setTasks(td); setAgents(ad);
+                                              }}
+                                              className="px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 rounded text-[10px] hover:bg-yellow-500/30"
+                                            >
+                                              Unblock
+                                            </button>
+                                          )}
                                           {taskMessages.length > 0 && (
                                             <span className="text-[10px] text-gray-500">{taskMessages.length} msg{taskMessages.length !== 1 ? 's' : ''}</span>
                                           )}
@@ -790,6 +833,36 @@ export default function PRDsPage() {
                                           ) : (
                                             <p className="text-[10px] text-gray-500 italic">No messages yet</p>
                                           )}
+
+                                          {/* Agent Output toggle */}
+                                          {task.assigned_to && (
+                                          <div className="mt-3 border-t border-dark-border pt-2">
+                                            <button
+                                              onClick={(e) => {
+                                                e.stopPropagation();
+                                                setShowLogsForTask(showLogsForTask === task.id ? null : task.id);
+                                              }}
+                                              className="flex items-center gap-1.5 text-[10px] text-gray-500 hover:text-gray-300"
+                                            >
+                                              <span>{showLogsForTask === task.id ? '▼' : '▶'}</span>
+                                              <span>Agent Output</span>
+                                              {agentById(task.assigned_to)?.connected && showLogsForTask === task.id && (
+                                                <span className="text-green-400 animate-pulse">live</span>
+                                              )}
+                                            </button>
+                                            {showLogsForTask === task.id && (
+                                              <div className="mt-2 bg-[#0d0d0d] border border-dark-border rounded p-2 max-h-48 overflow-y-auto font-mono text-[10px] leading-relaxed text-gray-400">
+                                                {agentLogs.length > 0 ? (
+                                                  agentLogs.map((line, i) => (
+                                                    <div key={i} className="whitespace-pre-wrap break-all">{line}</div>
+                                                  ))
+                                                ) : (
+                                                  <p className="text-gray-600 italic">No output yet</p>
+                                                )}
+                                              </div>
+                                            )}
+                                          </div>
+                                        )}
                                         </div>
                                       )}
                                     </div>

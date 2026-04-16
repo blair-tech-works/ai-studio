@@ -14,8 +14,10 @@
     "build": "npm run build --workspace=orchestrator && npm run build --workspace=dashboard",
     "db:migrate": "npm run db:migrate --workspace=orchestrator",
     "db:up": "docker compose -f docker/docker-compose.dev.yml up -d",
-    "db:down": "docker compose -f docker/docker-compose.dev.yml down",
+    "db:down": "scripts/db-backup.sh; docker compose -f docker/docker-compose.dev.yml down",
     "db:logs": "docker compose -f docker/docker-compose.dev.yml logs -f postgres",
+    "db:backup": "scripts/db-backup.sh",
+    "db:restore": "scripts/db-restore.sh",
     "docker:up": "docker compose -f docker/docker-compose.yml up -d",
     "docker:down": "docker compose -f docker/docker-compose.yml down"
   },

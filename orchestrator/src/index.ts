@@ -144,6 +144,37 @@ Type 'ctrl+c' to shutdown.
 
   // Start the agent health monitor (detects disconnects, auto-recovers)
   lifecycleManager.startHealthMonitor();
+
+  // Auto-backup database on startup (safety net against data loss)
+  (async () => {
+    try {
+      const { exec } = require('child_process');
+      const backupScript = require('path').resolve(__dirname, '..', '..', 'scripts', 'db-backup.sh');
+      const { existsSync } = require('fs');
+      if (existsSync(backupScript)) {
+        exec(`bash "${backupScript}"`, { env: { ...process.env, PATH: `/usr/local/bin:${process.env.PATH}` } },
+          (err: any, stdout: string) => {
+            if (stdout) console.log(stdout.trim());
+            if (err) console.error('Auto-backup warning:', err.message);
+          }
+        );
+      }
+
+      // Warn if database appears empty but data dir exists
+      const result = await pool.query('SELECT COUNT(*) as c FROM prds');
+      const prdCount = parseInt(result.rows[0].c);
+      if (prdCount === 0) {
+        console.log('\n⚠️  WARNING: Database has 0 PRDs. If you expected data, check:');
+        console.log('   - Was the Docker container recreated? (docker compose down destroys init state)');
+        console.log('   - Run: npm run db:restore  (restores from latest backup)');
+        console.log('   - Backups at: data/backups/\n');
+      } else {
+        console.log(`Database: ${prdCount} PRD(s) found`);
+      }
+    } catch (err: any) {
+      console.error('Startup check failed:', err.message);
+    }
+  })();
 });
 
 // Export for testing

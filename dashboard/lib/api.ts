@@ -272,6 +272,15 @@ export async function stopAgent(name: string): Promise<Agent> {
   return data.agent;
 }
 
+export async function fetchAgentLogs(name: string, prdId?: string, lines?: number): Promise<{ lines: string[]; file: string | null; connected: boolean }> {
+  const params = new URLSearchParams();
+  if (prdId) params.append('prdId', prdId);
+  if (lines) params.append('lines', lines.toString());
+  const res = await fetch(`/api/agents/${name}/logs${params.toString() ? '?' + params.toString() : ''}`);
+  if (!res.ok) return { lines: [], file: null, connected: false };
+  return res.json();
+}
+
 export async function restartAgent(name: string): Promise<Agent> {
   await stopAgent(name);
   return startAgent(name);

@@ -1,7 +1,10 @@
 import { Router, Request, Response } from 'express';
 import { pool, query } from '../db/pool';
+import { readFileSync, readdirSync, existsSync } from 'fs';
+import { join, resolve } from 'path';
 
 const router = Router();
+const LOGS_DIR = resolve(__dirname, '..', '..', '..', 'tmp', 'logs');
 
 // GET /api/agents - list all agents with their current status, metrics
 router.get('/', async (req: Request, res: Response) => {
@@ -188,6 +191,55 @@ router.get('/:name/messages', async (req: Request, res: Response) => {
   } catch (error) {
     console.error('Error fetching agent messages:', error);
     res.status(500).json({ error: 'Failed to fetch messages' });
+  }
+});
+
+// GET /api/agents/:name/logs - tail the agent's log file
+router.get('/:name/logs', (req: Request, res: Response) => {
+  try {
+    const { name } = req.params;
+    const prdId = req.query.prdId as string;
+    const maxLines = Math.min(parseInt(req.query.lines as string) || 50, 200);
+
+    if (!existsSync(LOGS_DIR)) {
+      return res.json({ lines: [], file: null, connected: false });
+    }
+
+    // Find the log file — either by prdId prefix or most recent for this agent
+    let logFile: string | null = null;
+
+    if (prdId) {
+      const prefix = prdId.slice(0, 8);
+      const candidate = join(LOGS_DIR, `${prefix}-${name}.log`);
+      if (existsSync(candidate)) logFile = candidate;
+    }
+
+    if (!logFile) {
+      // Find the most recent log file for this agent
+      const files = readdirSync(LOGS_DIR)
+        .filter(f => f.endsWith(`-${name}.log`) || f === `${name}.log`)
+        .map(f => ({ name: f, path: join(LOGS_DIR, f), mtime: require('fs').statSync(join(LOGS_DIR, f)).mtimeMs }))
+        .sort((a, b) => b.mtime - a.mtime);
+
+      if (files.length > 0) logFile = files[0].path;
+    }
+
+    if (!logFile || !existsSync(logFile)) {
+      return res.json({ lines: [], file: null, connected: false });
+    }
+
+    // Read last N lines
+    const content = readFileSync(logFile, 'utf-8');
+    const allLines = content.split('\n');
+    const tail = allLines.slice(-maxLines).filter(l => l.trim() !== '');
+
+    const lifecycleManager = req.app.get('lifecycleManager');
+    const connected = lifecycleManager?.isConnected(name) ?? false;
+
+    res.json({ lines: tail, file: logFile, connected });
+  } catch (error) {
+    console.error('Error reading agent logs:', error);
+    res.status(500).json({ error: 'Failed to read logs' });
   }
 });
 
