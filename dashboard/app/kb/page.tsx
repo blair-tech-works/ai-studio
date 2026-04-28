@@ -2,6 +2,7 @@
 
 import { fetchKB, type KBArticle } from '@/lib/api';
 import { useEffect, useMemo, useState } from 'react';
+import { ChevronDown, ChevronRight, Info } from 'lucide-react';
 import Badge from '@/components/ui/Badge';
 import Button from '@/components/ui/Button';
 
@@ -26,6 +27,7 @@ export default function KBPage() {
   const [loading, setLoading] = useState(true);
   const [searchTerm, setSearchTerm] = useState('');
   const [activeTag, setActiveTag] = useState<string>('');
+  const [showHelp, setShowHelp] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -74,11 +76,83 @@ export default function KBPage() {
 
   return (
     <div className="p-8 max-w-6xl">
-      <div className="mb-7">
+      <div className="mb-5">
         <h1 className="text-2xl font-semibold text-text-primary tracking-tight">Knowledge Base</h1>
         <p className="text-sm text-text-secondary mt-1">
           Searchable repository of documentation and information
         </p>
+      </div>
+
+      {/* How This Works — expandable */}
+      <div className="mb-6 bg-surface border border-border-subtle rounded-lg">
+        <button
+          onClick={() => setShowHelp((v) => !v)}
+          className="w-full flex items-center justify-between gap-2 px-4 py-2.5 text-left focus-ring rounded-lg"
+        >
+          <span className="flex items-center gap-2 text-sm text-text-primary">
+            <Info size={14} strokeWidth={1.75} className="text-accent-400" />
+            How This Works
+          </span>
+          {showHelp ? (
+            <ChevronDown size={14} className="text-text-muted" />
+          ) : (
+            <ChevronRight size={14} className="text-text-muted" />
+          )}
+        </button>
+        {showHelp && (
+          <div className="px-4 pb-4 pt-1 border-t border-border-subtle text-sm text-text-secondary space-y-3 leading-relaxed">
+            <p>
+              The Knowledge Base is the shared memory layer for every agent in the studio.
+              Agents read it before starting work and write to it when they discover something
+              worth preserving — patterns, decisions, gotchas, runbooks, post-mortems.
+            </p>
+
+            <div>
+              <h4 className="text-text-primary font-medium mb-1">Where it lives</h4>
+              <p>
+                All articles are stored in the <code className="font-mono text-xs bg-elevated px-1.5 py-0.5 rounded text-text-accent">knowledge_base</code>{' '}
+                table in Postgres — <em>not</em> as files on disk. Each row has a
+                unique slug-style <code className="font-mono text-xs bg-elevated px-1.5 py-0.5 rounded text-text-accent">path</code>{' '}
+                (e.g. <code className="font-mono text-xs bg-elevated px-1.5 py-0.5 rounded text-text-accent">storage-strategy</code>),
+                a title, markdown content, and a tag set.
+              </p>
+              <p className="mt-1.5">
+                Backups are automatic — the orchestrator snapshots the database on startup and
+                before <code className="font-mono text-xs bg-elevated px-1.5 py-0.5 rounded text-text-accent">npm run db:down</code>.
+                Snapshots land in <code className="font-mono text-xs bg-elevated px-1.5 py-0.5 rounded text-text-accent">data/backups/</code>{' '}
+                (last 10 retained).
+              </p>
+            </div>
+
+            <div>
+              <h4 className="text-text-primary font-medium mb-1">How agents use it</h4>
+              <p className="mb-2">Agents call the KB over HTTP from inside their working sessions:</p>
+              <pre className="font-mono text-xs bg-canvas border border-border-subtle rounded p-2.5 overflow-x-auto leading-snug">
+                <span className="text-text-muted"># Read an article by path</span>
+                {'\n'}curl http://localhost:3001/api/kb/api-design-standards
+                {'\n\n'}<span className="text-text-muted"># Write/update an article (upsert)</span>
+                {'\n'}curl -X PUT http://localhost:3001/api/kb/lessons-learned-pr-7 \
+                {'\n  '}-H {'"Content-Type: application/json"'} \
+                {'\n  '}-d {`'{"title":"...","content":"...","tags":["qa","react-native"]}'`}
+              </pre>
+            </div>
+
+            <div>
+              <h4 className="text-text-primary font-medium mb-1">When to write to it</h4>
+              <ul className="list-disc list-inside space-y-1 ml-1">
+                <li>You discovered a non-obvious solution — write the gotcha down so the next agent finds it.</li>
+                <li>You established a pattern (auth, error handling, file layout). Make it discoverable.</li>
+                <li>You finished a PRD with notable lessons. The QA / EVO agents typically write summaries.</li>
+              </ul>
+            </div>
+
+            <div className="text-xs text-text-muted pt-1">
+              API: <code className="font-mono">GET</code> /api/kb · <code className="font-mono">GET</code>{' '}
+              /api/kb/&lt;path&gt; · <code className="font-mono">PUT</code> /api/kb/&lt;path&gt; ·{' '}
+              <code className="font-mono">DELETE</code> /api/kb/&lt;path&gt;
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
