@@ -1,36 +1,51 @@
 'use client';
 
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useMessages, useAgents } from '@/lib/hooks';
 import { sendMessage } from '@/lib/api';
+import Button from '@/components/ui/Button';
+import Badge from '@/components/ui/Badge';
+
+const MESSAGE_FILTERS = { limit: 100 } as const;
 
 export default function MessagesPage() {
-  const { messages, loading, refetch } = useMessages({ limit: 100 });
+  const { messages, loading, refetch } = useMessages(MESSAGE_FILTERS);
   const { agents } = useAgents();
-  const [fromAgent, setFromAgent] = useState('');
-  const [toAgent, setToAgent] = useState('');
-  const [content, setContent] = useState('');
+
+  const [fromFilter, setFromFilter] = useState<string>('');
+  const [toFilter, setToFilter] = useState<string>('');
+  const [composing, setComposing] = useState(false);
+  const [composeFrom, setComposeFrom] = useState('');
+  const [composeTo, setComposeTo] = useState('');
+  const [composeContent, setComposeContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
-  const filteredMessages = messages.filter(m => {
-    if (fromAgent && m.from_agent !== fromAgent) return false;
-    if (toAgent && m.to_agent !== toAgent) return false;
-    return true;
-  });
+  const filteredMessages = useMemo(
+    () =>
+      messages.filter((m) => {
+        if (fromFilter && m.from_agent !== fromFilter) return false;
+        if (toFilter && m.to_agent !== toFilter) return false;
+        return true;
+      }),
+    [messages, fromFilter, toFilter]
+  );
 
-  const handleSendMessage = async (e: React.FormEvent) => {
+  const agentLabel = (name: string) =>
+    agents.find((a) => a.name === name)?.display_name || name;
+
+  const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!fromAgent || !toAgent || !content) return;
-
+    if (!composeFrom || !composeTo || !composeContent.trim()) return;
     setSubmitting(true);
     try {
       await sendMessage({
-        from_agent: fromAgent,
-        to_agent: toAgent,
-        content,
+        from_agent: composeFrom,
+        to_agent: composeTo,
+        content: composeContent,
         type: 'message'
       });
-      setContent('');
+      setComposeContent('');
+      setComposing(false);
       await refetch();
     } catch (err) {
       console.error('Failed to send message:', err);
@@ -40,116 +55,157 @@ export default function MessagesPage() {
   };
 
   return (
-    <div className="p-8">
-      <div className="mb-8">
-        <h1 className="text-4xl font-bold text-white mb-2">Messages</h1>
-        <p className="text-gray-400">Communication between agents and tasks</p>
+    <div className="p-8 max-w-5xl">
+      <div className="mb-7 flex items-start justify-between">
+        <div>
+          <h1 className="text-2xl font-semibold text-text-primary tracking-tight">Messages</h1>
+          <p className="text-sm text-text-secondary mt-1">
+            Communication between agents and tasks
+          </p>
+        </div>
+        <Button variant="primary" size="md" onClick={() => setComposing((c) => !c)}>
+          {composing ? 'Cancel' : 'New Message'}
+        </Button>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
-        {/* Agent Selection */}
-        <div className="lg:col-span-1">
-          <h2 className="text-lg font-semibold text-white mb-4">Agents</h2>
-          <div className="card space-y-2 max-h-96 overflow-y-auto">
-            {agents.length === 0 ? (
-              <p className="text-gray-400 text-sm">No agents available</p>
-            ) : (
-              <>
-                <div>
-                  <p className="text-xs text-gray-400 mb-2">From:</p>
-                  {agents.map(agent => (
-                    <button
-                      key={`from-${agent.id}`}
-                      onClick={() => setFromAgent(agent.name)}
-                      className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
-                        fromAgent === agent.name
-                          ? 'bg-blue-500 text-white'
-                          : 'text-gray-400 hover:bg-dark-border'
-                      }`}
-                    >
-                      {agent.display_name || agent.name}
-                    </button>
-                  ))}
-                </div>
-                <hr className="border-dark-border my-3" />
-                <div>
-                  <p className="text-xs text-gray-400 mb-2">To:</p>
-                  {agents.map(agent => (
-                    <button
-                      key={`to-${agent.id}`}
-                      onClick={() => setToAgent(agent.name)}
-                      className={`w-full text-left px-3 py-2 rounded text-sm transition-colors ${
-                        toAgent === agent.name
-                          ? 'bg-green-500 text-white'
-                          : 'text-gray-400 hover:bg-dark-border'
-                      }`}
-                    >
-                      {agent.display_name || agent.name}
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
+      {/* Filters */}
+      <div className="flex flex-wrap items-center gap-3 mb-6">
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-text-muted uppercase tracking-wider">From</span>
+          <select
+            value={fromFilter}
+            onChange={(e) => setFromFilter(e.target.value)}
+            className="bg-surface border border-border-subtle rounded-md px-2.5 py-1 text-sm text-text-primary focus-ring"
+          >
+            <option value="">Any</option>
+            {agents.map((a) => (
+              <option key={a.id} value={a.name}>
+                {a.display_name || a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-text-muted uppercase tracking-wider">To</span>
+          <select
+            value={toFilter}
+            onChange={(e) => setToFilter(e.target.value)}
+            className="bg-surface border border-border-subtle rounded-md px-2.5 py-1 text-sm text-text-primary focus-ring"
+          >
+            <option value="">Any</option>
+            {agents.map((a) => (
+              <option key={a.id} value={a.name}>
+                {a.display_name || a.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        {(fromFilter || toFilter) && (
+          <Button variant="ghost" size="sm" onClick={() => { setFromFilter(''); setToFilter(''); }}>
+            Clear
+          </Button>
+        )}
+        <span className="text-xs text-text-muted ml-auto font-mono">
+          {filteredMessages.length} of {messages.length}
+        </span>
+      </div>
+
+      {/* Compose */}
+      {composing && (
+        <form
+          onSubmit={handleSend}
+          className="bg-surface border border-border-subtle rounded-lg p-4 mb-6 space-y-3"
+        >
+          <div className="flex gap-3">
+            <select
+              value={composeFrom}
+              onChange={(e) => setComposeFrom(e.target.value)}
+              className="flex-1 bg-canvas border border-border-subtle rounded-md px-2.5 py-1.5 text-sm text-text-primary focus-ring"
+              required
+            >
+              <option value="">From agent…</option>
+              {agents.map((a) => (
+                <option key={a.id} value={a.name}>
+                  {a.display_name || a.name}
+                </option>
+              ))}
+            </select>
+            <span className="text-text-muted self-center">→</span>
+            <select
+              value={composeTo}
+              onChange={(e) => setComposeTo(e.target.value)}
+              className="flex-1 bg-canvas border border-border-subtle rounded-md px-2.5 py-1.5 text-sm text-text-primary focus-ring"
+              required
+            >
+              <option value="">To agent…</option>
+              {agents.map((a) => (
+                <option key={a.id} value={a.name}>
+                  {a.display_name || a.name}
+                </option>
+              ))}
+            </select>
           </div>
-        </div>
+          <textarea
+            placeholder="Message…"
+            value={composeContent}
+            onChange={(e) => setComposeContent(e.target.value)}
+            className="w-full bg-canvas border border-border-subtle rounded-md px-3 py-2 text-sm text-text-primary placeholder-text-muted focus-ring resize-none"
+            rows={3}
+            required
+          />
+          <div className="flex justify-end">
+            <Button
+              type="submit"
+              variant="primary"
+              size="md"
+              disabled={submitting || !composeFrom || !composeTo || !composeContent.trim()}
+            >
+              {submitting ? 'Sending…' : 'Send'}
+            </Button>
+          </div>
+        </form>
+      )}
 
-        {/* Messages */}
-        <div className="lg:col-span-3">
-          {!fromAgent || !toAgent ? (
-            <div className="card text-center py-12 text-gray-400">
-              Select from and to agents to view messages
-            </div>
-          ) : (
-            <>
-              <h2 className="text-lg font-semibold text-white mb-4">
-                {agents.find(a => a.name === fromAgent)?.display_name || fromAgent} → {agents.find(a => a.name === toAgent)?.display_name || toAgent}
-              </h2>
-              <div className="card mb-4 max-h-96 overflow-y-auto space-y-3">
-                {loading ? (
-                  <p className="text-gray-400">Loading messages...</p>
-                ) : filteredMessages.length === 0 ? (
-                  <p className="text-gray-400">No messages</p>
-                ) : (
-                  filteredMessages.map(msg => (
-                    <div
-                      key={msg.id}
-                      className="border border-dark-border rounded p-3"
-                    >
-                      <div className="flex justify-between items-start mb-1">
-                        <span className="font-medium text-blue-400 text-sm">
-                          {msg.from_agent} → {msg.to_agent}
-                        </span>
-                        <span className="text-xs text-gray-500">
-                          {new Date(msg.created_at).toLocaleTimeString()}
-                        </span>
-                      </div>
-                      <p className="text-xs text-purple-400 mb-1">{msg.type}</p>
-                      <p className="text-sm text-gray-300">{msg.content}</p>
-                    </div>
-                  ))
-                )}
+      {/* Message list */}
+      {loading && messages.length === 0 ? (
+        <div className="text-center py-12 text-text-secondary text-sm">Loading messages…</div>
+      ) : filteredMessages.length === 0 ? (
+        <div className="bg-surface border border-border-subtle rounded-lg p-8 text-center text-text-secondary text-sm">
+          {messages.length === 0
+            ? 'No messages yet'
+            : 'No messages match the current filters'}
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {filteredMessages.map((msg) => (
+            <div
+              key={msg.id}
+              className="bg-surface border border-border-subtle rounded-lg p-3 hover:border-border-strong transition-colors duration-150"
+            >
+              <div className="flex items-center justify-between gap-3 mb-1.5">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-sm font-medium text-text-primary truncate">
+                    {agentLabel(msg.from_agent)}
+                  </span>
+                  <span className="text-text-muted">→</span>
+                  <span className="text-sm font-medium text-text-primary truncate">
+                    {agentLabel(msg.to_agent)}
+                  </span>
+                  <Badge variant={msg.type === 'message' ? 'neutral' : 'accent'}>
+                    {msg.type}
+                  </Badge>
+                </div>
+                <span className="text-[11px] text-text-muted font-mono flex-shrink-0">
+                  {new Date(msg.created_at).toLocaleString()}
+                </span>
               </div>
-
-              <form onSubmit={handleSendMessage} className="space-y-3">
-                <textarea
-                  placeholder="Type your message..."
-                  value={content}
-                  onChange={(e) => setContent(e.target.value)}
-                  className="w-full bg-dark-bg border border-dark-border rounded px-3 py-2 text-white placeholder-gray-500"
-                  rows={3}
-                />
-                <button
-                  type="submit"
-                  className="btn btn-primary w-full"
-                  disabled={submitting}
-                >
-                  {submitting ? 'Sending...' : 'Send Message'}
-                </button>
-              </form>
-            </>
-          )}
+              <p className="text-sm text-text-secondary whitespace-pre-wrap leading-relaxed">
+                {msg.content}
+              </p>
+            </div>
+          ))}
         </div>
-      </div>
+      )}
     </div>
   );
 }

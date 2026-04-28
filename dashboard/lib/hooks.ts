@@ -51,10 +51,14 @@ export function useTasks(filters?: { status?: string; assigned_to?: string; prio
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Stable key from filters so a new {} literal each render doesn't re-fire effects.
+  const filtersKey = JSON.stringify(filters ?? {});
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
+
   const loadTasks = useCallback(async () => {
     try {
-      setLoading(true);
-      const data = await fetchTasks(filters);
+      const data = await fetchTasks(filtersRef.current);
       setTasks(data);
       setError(null);
     } catch (err) {
@@ -62,7 +66,8 @@ export function useTasks(filters?: { status?: string; assigned_to?: string; prio
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtersKey]);
 
   useEffect(() => {
     loadTasks();
@@ -89,10 +94,14 @@ export function useMessages(filters?: { from_agent?: string; to_agent?: string; 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
+  // Stable key from filters so a new {} literal each render doesn't re-fire effects.
+  const filtersKey = JSON.stringify(filters ?? {});
+  const filtersRef = useRef(filters);
+  filtersRef.current = filters;
+
   const loadMessages = useCallback(async () => {
     try {
-      setLoading(true);
-      const data = await fetchMessages(filters);
+      const data = await fetchMessages(filtersRef.current);
       setMessages(data);
       setError(null);
     } catch (err) {
@@ -100,7 +109,8 @@ export function useMessages(filters?: { from_agent?: string; to_agent?: string; 
     } finally {
       setLoading(false);
     }
-  }, [filters]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [filtersKey]);
 
   useEffect(() => {
     loadMessages();
