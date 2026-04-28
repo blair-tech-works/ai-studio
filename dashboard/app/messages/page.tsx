@@ -20,18 +20,35 @@ export default function MessagesPage() {
   const [composeContent, setComposeContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
+  // Filter values are agent names; messages may store either id or name.
+  // Match a message's agent field against the selected agent's id OR name.
+  const matchesAgent = (msgField: string, selectedName: string) => {
+    if (!selectedName) return true;
+    if (msgField === selectedName) return true;
+    const a = agents.find((x) => x.name === selectedName);
+    return !!a && msgField === a.id;
+  };
+
   const filteredMessages = useMemo(
     () =>
-      messages.filter((m) => {
-        if (fromFilter && m.from_agent !== fromFilter) return false;
-        if (toFilter && m.to_agent !== toFilter) return false;
-        return true;
-      }),
-    [messages, fromFilter, toFilter]
+      messages.filter(
+        (m) =>
+          matchesAgent(m.from_agent, fromFilter) &&
+          matchesAgent(m.to_agent, toFilter)
+      ),
+    // matchesAgent depends on `agents` via closure
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [messages, fromFilter, toFilter, agents]
   );
 
-  const agentLabel = (name: string) =>
-    agents.find((a) => a.name === name)?.display_name || name;
+  // Messages may store either an agent id (UUID) or a name; resolve to a display label.
+  const agentLabel = (idOrName: string) => {
+    const a = agents.find((x) => x.id === idOrName || x.name === idOrName);
+    return a?.display_name || a?.name || idOrName;
+  };
+
+  // True if the field looks like a UUID (so we know to surface the raw value as a tooltip).
+  const isUuid = (s: string) => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
 
   const handleSend = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -184,11 +201,17 @@ export default function MessagesPage() {
             >
               <div className="flex items-center justify-between gap-3 mb-1.5">
                 <div className="flex items-center gap-2 min-w-0">
-                  <span className="text-sm font-medium text-text-primary truncate">
+                  <span
+                    className="text-sm font-medium text-text-primary truncate"
+                    title={isUuid(msg.from_agent) ? msg.from_agent : undefined}
+                  >
                     {agentLabel(msg.from_agent)}
                   </span>
                   <span className="text-text-muted">→</span>
-                  <span className="text-sm font-medium text-text-primary truncate">
+                  <span
+                    className="text-sm font-medium text-text-primary truncate"
+                    title={isUuid(msg.to_agent) ? msg.to_agent : undefined}
+                  >
                     {agentLabel(msg.to_agent)}
                   </span>
                   <Badge variant={msg.type === 'message' ? 'neutral' : 'accent'}>
