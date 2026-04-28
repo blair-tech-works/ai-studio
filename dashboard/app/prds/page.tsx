@@ -24,6 +24,9 @@ import {
 } from '@/lib/api';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
+import { ChevronDown, ChevronRight, Plus } from 'lucide-react';
+import Button from '@/components/ui/Button';
+import Badge from '@/components/ui/Badge';
 
 export default function PRDsPage() {
   const [prds, setPRDs] = useState<PRD[]>([]);
@@ -122,12 +125,11 @@ export default function PRDsPage() {
   const filteredPRDs =
     filter === 'all' ? prds : prds.filter((p) => p.status === filter);
 
-  const statusColors: Record<string, string> = {
-    draft: 'bg-yellow-500/10 border-yellow-500 text-yellow-400',
-    review: 'bg-blue-500/10 border-blue-500 text-blue-400',
-    approved: 'bg-green-500/10 border-green-500 text-green-400',
-    active: 'bg-green-500/10 border-green-500 text-green-400',
-    completed: 'bg-gray-500/10 border-gray-500 text-gray-400',
+  const statusVariant = (status: string): 'warning' | 'accent' | 'success' | 'neutral' => {
+    if (status === 'draft') return 'warning';
+    if (status === 'review') return 'accent';
+    if (status === 'approved' || status === 'active') return 'success';
+    return 'neutral';
   };
 
   const agentName = (agentId: string) => {
@@ -368,88 +370,93 @@ export default function PRDsPage() {
       .replace(/`([^`]+)`/g, '<code class="bg-dark-border px-1 rounded text-blue-300 text-xs">$1</code>');
 
   return (
-    <div className="p-8">
-      <div className="mb-8 flex items-start justify-between">
+    <div className="p-8 max-w-6xl">
+      <div className="mb-7 flex items-start justify-between">
         <div>
-          <h1 className="text-4xl font-bold text-white mb-2">Products</h1>
-          <p className="text-gray-400">Product Requirements &amp; Development</p>
+          <h1 className="text-2xl font-semibold text-text-primary tracking-tight">Products</h1>
+          <p className="text-sm text-text-secondary mt-1">Product Requirements &amp; Development</p>
         </div>
-        <Link
-          href="/prds/new"
-          className="px-4 py-2 bg-blue-500 text-white rounded-lg text-sm font-medium hover:bg-blue-600 transition-colors"
-        >
-          + New Product
+        <Link href="/prds/new">
+          <Button variant="primary" size="md">
+            <Plus size={14} strokeWidth={2.25} />
+            New Product
+          </Button>
         </Link>
       </div>
 
-      {/* Filter Tabs */}
-      <div className="flex gap-2 mb-6">
-        {['all', 'draft', 'review', 'approved', 'active', 'completed'].map((s) => (
-          <button
-            key={s}
-            onClick={() => setFilter(s)}
-            className={`px-4 py-2 rounded text-sm font-medium transition-colors ${
-              filter === s ? 'bg-blue-500 text-white' : 'bg-dark-border text-gray-400 hover:text-white'
-            }`}
-          >
-            {s}
-          </button>
-        ))}
+      {/* Filter Tabs — segmented bar */}
+      <div className="inline-flex items-center gap-0.5 mb-6 p-0.5 border border-border-subtle rounded-md bg-surface">
+        {['all', 'draft', 'review', 'approved', 'active', 'completed'].map((s) => {
+          const isActive = filter === s;
+          return (
+            <button
+              key={s}
+              onClick={() => setFilter(s)}
+              className={`relative px-3 py-1 text-xs font-medium rounded transition-colors duration-150 focus-ring ${
+                isActive
+                  ? 'bg-elevated text-text-primary'
+                  : 'text-text-secondary hover:text-text-primary'
+              }`}
+            >
+              <span className="capitalize">{s}</span>
+              {isActive && (
+                <span className="absolute left-2 right-2 -bottom-px h-px bg-accent-500" />
+              )}
+            </button>
+          );
+        })}
       </div>
 
       {loading ? (
-        <div className="text-center py-12 text-gray-400">Loading PRDs...</div>
+        <div className="text-center py-12 text-text-secondary text-sm">Loading PRDs...</div>
       ) : (
-        <div className="space-y-3">
+        <div className="space-y-2">
           {filteredPRDs.length === 0 ? (
-            <div className="card"><p className="text-gray-400 text-center py-8">No products yet</p></div>
+            <div className="bg-surface border border-border-subtle rounded-lg p-4">
+              <p className="text-text-secondary text-center py-6 text-sm">No products yet</p>
+            </div>
           ) : (
-            filteredPRDs.map((prd) => (
+            filteredPRDs.map((prd) => {
+              const isExpanded = expandedId === prd.id;
+              return (
               <div
                 key={prd.id}
-                className={`card border transition-colors cursor-pointer ${
-                  expandedId === prd.id ? 'border-blue-500' : 'border-dark-border hover:border-blue-500/50'
+                className={`bg-surface border rounded-lg transition-colors duration-150 cursor-pointer p-4 ${
+                  isExpanded ? 'border-accent-500' : 'border-border-subtle hover:border-border-strong'
                 }`}
               >
                 {/* Header row — always visible */}
-                <div className="flex items-start justify-between" onClick={() => handleCardClick(prd.id)}>
-                  <div className="flex-1">
+                <div className="flex items-start justify-between gap-4" onClick={() => handleCardClick(prd.id)}>
+                  <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
-                      <span className="text-gray-500 text-xs">{expandedId === prd.id ? '▼' : '▶'}</span>
-                      <h3 className="font-semibold text-white">{prd.title}</h3>
+                      <span className="text-text-muted">
+                        {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                      </span>
+                      <h3 className="font-semibold text-text-primary truncate">{prd.title}</h3>
                     </div>
-                    <p className="text-xs text-gray-400 mt-1 ml-5">
-                      v{prd.version} by {prd.created_by || 'human'} &middot;{' '}
+                    <p className="text-xs text-text-muted mt-1 ml-6 font-mono">
+                      v{prd.version} · {prd.created_by || 'human'} ·{' '}
                       {new Date(prd.updated_at).toLocaleDateString()}
                     </p>
                   </div>
-                  <div className="flex items-center gap-2">
-                    <span className={`px-2 py-1 rounded text-xs font-medium border ${statusColors[prd.status]}`}>
+                  <div className="flex items-center gap-2 flex-shrink-0">
+                    <Badge variant={statusVariant(prd.status)} dot uppercase>
                       {prd.status}
-                    </span>
+                    </Badge>
                     {copyingId !== prd.id && (
-                      <button
-                        onClick={(e) => handleCopyClick(prd, e)}
-                        className="px-2 py-1 bg-dark-border text-gray-400 rounded text-xs hover:text-white hover:bg-dark-card"
-                      >
+                      <Button variant="ghost" size="sm" onClick={(e) => handleCopyClick(prd, e)}>
                         Copy
-                      </button>
+                      </Button>
                     )}
                     {prd.status === 'draft' && publishingId !== prd.id && (
-                      <button
-                        onClick={(e) => handlePublishClick(prd.id, e)}
-                        className="px-2 py-1 bg-blue-500 text-white rounded text-xs hover:bg-blue-600"
-                      >
+                      <Button variant="primary" size="sm" onClick={(e) => handlePublishClick(prd.id, e)}>
                         Publish
-                      </button>
+                      </Button>
                     )}
                     {prd.status === 'review' && (
-                      <button
-                        onClick={(e) => handleOverride(prd.id, e)}
-                        className="px-2 py-1 bg-purple-500 text-white rounded text-xs hover:bg-purple-600"
-                      >
+                      <Button variant="secondary" size="sm" onClick={(e) => handleOverride(prd.id, e)}>
                         Override
-                      </button>
+                      </Button>
                     )}
                     {(prd.status === 'approved' || prd.status === 'active') && (() => {
                       const prdTasks = tasks.filter(t => t.prd_id === prd.id);
@@ -459,28 +466,31 @@ export default function PRDsPage() {
                       return (
                         <>
                           {prdTasks.length > 0 ? (
-                            <span className="px-2 py-1 bg-green-500/20 text-green-400 border border-green-500/30 rounded text-xs">
+                            <Badge variant="success">
                               {prdTasks.filter(t => t.status === 'done').length}/{prdTasks.length} tasks
-                            </span>
+                            </Badge>
                           ) : pmActive ? (
-                            <span className="px-2 py-1 bg-blue-500/20 text-blue-400 border border-blue-500/30 rounded text-xs animate-pulse">
+                            <Badge variant="accent" className="pulse">
                               Decomposing...
-                            </span>
+                            </Badge>
                           ) : null}
                           {allDone && (
                             <>
-                              <button
+                              <Button
+                                variant="primary"
+                                size="sm"
                                 onClick={async (e) => {
                                   e.stopPropagation();
                                   await acceptPRD(prd.id);
                                   const data = await fetchPRDs();
                                   setPRDs(data);
                                 }}
-                                className="px-2 py-1 bg-green-500 text-white rounded text-xs hover:bg-green-600"
                               >
                                 Accept
-                              </button>
-                              <button
+                              </Button>
+                              <Button
+                                variant="danger"
+                                size="sm"
                                 onClick={async (e) => {
                                   e.stopPropagation();
                                   const reason = prompt('Rejection reason (optional):');
@@ -488,19 +498,16 @@ export default function PRDsPage() {
                                   const data = await fetchPRDs();
                                   setPRDs(data);
                                 }}
-                                className="px-2 py-1 bg-red-500/20 text-red-400 border border-red-500/30 rounded text-xs hover:bg-red-500/30"
                               >
                                 Reject
-                              </button>
+                              </Button>
                             </>
                           )}
                         </>
                       );
                     })()}
                     {prd.metadata?.queued && (
-                      <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 border border-yellow-500/30 rounded text-xs">
-                        Queued
-                      </span>
+                      <Badge variant="warning">Queued</Badge>
                     )}
                   </div>
                 </div>
@@ -896,7 +903,8 @@ export default function PRDsPage() {
                   </div>
                 )}
               </div>
-            ))
+              );
+            })
           )}
         </div>
       )}
