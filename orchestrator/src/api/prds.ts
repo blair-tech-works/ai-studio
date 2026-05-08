@@ -2,59 +2,109 @@ import { Router, Request, Response } from 'express';
 import { pool, query } from '../db/pool';
 import { v4 as uuidv4 } from 'uuid';
 import { broadcast } from './events';
-import { exec, execSync } from 'child_process';
-import { writeFileSync, unlinkSync, mkdirSync, existsSync } from 'fs';
+import { exec, execSync, spawn } from 'child_process';
+import { writeFileSync, mkdirSync, existsSync } from 'fs';
 import { join, resolve, basename } from 'path';
+import Anthropic from '@anthropic-ai/sdk';
 import { PM_GRILLING_PROMPT, PM_SYNTHESIS_PROMPT } from './prompts/pm-drafter';
 
 const router = Router();
 
-// Ensure temp dir exists
-const TEMP_DIR = '/tmp/ai-studio-prompts';
-try { mkdirSync(TEMP_DIR, { recursive: true }); } catch {}
+const CLAUDE_CLI_PATH = process.env.CLAUDE_CLI_PATH || 'claude';
 
-// Helper: call claude CLI in print mode with a system prompt file
-function callClaude(userPrompt: string, systemPrompt: string): Promise<string> {
-  // Write system prompt and user prompt to temp files
-  const sysFile = join(TEMP_DIR, `sys-${Date.now()}.txt`);
-  const userFile = join(TEMP_DIR, `user-${Date.now()}.txt`);
-  writeFileSync(sysFile, systemPrompt);
-  writeFileSync(userFile, userPrompt);
+// Map common aliases to current model IDs; pass through full model strings.
+function resolveModel(alias: string): string {
+  const map: Record<string, string> = {
+    sonnet: 'claude-sonnet-4-5',
+    opus: 'claude-opus-4-5',
+    haiku: 'claude-haiku-4-5',
+  };
+  return map[alias.toLowerCase()] || alias;
+}
+
+// SDK path — used when ANTHROPIC_API_KEY is set. Works anywhere.
+let anthropicClient: Anthropic | null = null;
+function getAnthropic(): Anthropic {
+  if (anthropicClient) return anthropicClient;
+  anthropicClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+  return anthropicClient;
+}
+
+async function callClaudeViaSDK(userPrompt: string, systemPrompt: string): Promise<string> {
+  const model = resolveModel(process.env.PM_MODEL || 'sonnet');
+  const res = await getAnthropic().messages.create({
+    model,
+    max_tokens: 4096,
+    system: systemPrompt,
+    messages: [{ role: 'user', content: userPrompt }],
+  });
+  return res.content
+    .filter((b): b is Anthropic.TextBlock => b.type === 'text')
+    .map((b) => b.text)
+    .join('\n')
+    .trim();
+}
+
+// CLI path — used when no ANTHROPIC_API_KEY. Uses the user's Claude Code OAuth
+// from the keychain. REQUIRES the orchestrator to be started OUTSIDE another
+// Claude Code session (otherwise the CLI errors out: "Claude Code cannot be
+// launched inside another Claude Code session").
+function callClaudeViaCLI(userPrompt: string, systemPrompt: string): Promise<string> {
+  if (process.env.CLAUDECODE) {
+    return Promise.reject(new Error(
+      'PM agent unavailable: the orchestrator is running inside another Claude Code session, ' +
+        'which prevents the `claude` CLI from authenticating. Start the orchestrator from a plain ' +
+        'terminal (`npm run dev:orchestrator`) — or set ANTHROPIC_API_KEY in orchestrator/.env to ' +
+        'use the SDK instead.'
+    ));
+  }
 
   const model = process.env.PM_MODEL || 'sonnet';
-  const cmd = `cat "${userFile}" | npx -y @anthropic-ai/claude-code -p --model ${model} --no-session-persistence --append-system-prompt-file "${sysFile}"`;
-
-  return new Promise((resolve, reject) => {
-    exec(
-      cmd,
-      {
-        env: (() => {
-          // Start with current process env, extend PATH, remove empty API key
-          const env: Record<string, string> = {};
-          for (const [k, v] of Object.entries(process.env)) {
-            if (v !== undefined) env[k] = v;
-          }
-          env.PATH = `/usr/local/bin:${env.PATH || ''}`;
-          // Remove ANTHROPIC_API_KEY so CLI uses OAuth auth from keychain
-          delete env.ANTHROPIC_API_KEY;
-          return env;
-        })(),
-        timeout: 180000,
-        maxBuffer: 5 * 1024 * 1024,
-      },
-      (error, stdout, stderr) => {
-        // Clean up temp files
-        try { unlinkSync(sysFile); } catch {}
-        try { unlinkSync(userFile); } catch {}
-
-        if (error) {
-          console.error('Claude CLI error:', { stderr, stdout, code: error.code, signal: error.signal, message: error.message });
-          return reject(new Error(stderr || stdout || error.message));
-        }
-        resolve(stdout.trim());
-      }
+  return new Promise((resolveP, reject) => {
+    const child = spawn(
+      CLAUDE_CLI_PATH,
+      ['-p', '--model', model, '--append-system-prompt', systemPrompt],
+      { env: process.env }
     );
+
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error('Claude CLI timed out after 180s'));
+    }, 180_000);
+
+    child.stdout.on('data', (c) => { stdout += c.toString(); });
+    child.stderr.on('data', (c) => { stderr += c.toString(); });
+
+    child.on('error', (err) => {
+      clearTimeout(timer);
+      console.error('Claude CLI spawn error:', err);
+      reject(err);
+    });
+
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        console.error('Claude CLI non-zero exit:', { code, stderr, stdout: stdout.slice(0, 500) });
+        return reject(new Error(stderr.trim() || stdout.trim() || `claude exited with code ${code}`));
+      }
+      resolveP(stdout.trim());
+    });
+
+    child.stdin.write(userPrompt);
+    child.stdin.end();
   });
+}
+
+// Picks the SDK if ANTHROPIC_API_KEY is set, otherwise falls back to the CLI
+// (which uses the user's Claude Code OAuth). Either way, callers see the same
+// async string contract.
+async function callClaude(userPrompt: string, systemPrompt: string): Promise<string> {
+  if (process.env.ANTHROPIC_API_KEY) {
+    return callClaudeViaSDK(userPrompt, systemPrompt);
+  }
+  return callClaudeViaCLI(userPrompt, systemPrompt);
 }
 
 // Helper: save initial PRD draft to tmp/prds/ (pre-repo backup, before git commit)
@@ -164,7 +214,8 @@ router.post('/drafting', async (req: Request, res: Response) => {
     res.json({ message, suggestsFinalize });
   } catch (error) {
     console.error('Error in PRD drafting:', error);
-    res.status(502).json({ error: 'Failed to get PM response' });
+    const msg = error instanceof Error ? error.message : 'Failed to get PM response';
+    res.status(502).json({ error: msg });
   }
 });
 
@@ -209,7 +260,8 @@ router.post('/synthesize', async (req: Request, res: Response) => {
     res.json({ title, content, grade });
   } catch (error) {
     console.error('Error synthesizing PRD:', error);
-    res.status(502).json({ error: 'Failed to synthesize PRD' });
+    const msg = error instanceof Error ? error.message : 'Failed to synthesize PRD';
+    res.status(502).json({ error: msg });
   }
 });
 
