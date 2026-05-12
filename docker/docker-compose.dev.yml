@@ -11,7 +11,7 @@ services:
       POSTGRES_PASSWORD: ai_studio
       POSTGRES_DB: ai_studio
     ports:
-      - "5432:5432"
+      - "5434:5432"
     volumes:
       - ../data/pg:/var/lib/postgresql/data
       - ../db/migrations:/docker-entrypoint-initdb.d

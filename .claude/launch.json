@@ -4,13 +4,13 @@
     {
       "name": "orchestrator",
       "runtimeExecutable": "/bin/sh",
-      "runtimeArgs": ["-c", "export PATH=/usr/local/bin:$PATH && cd /Users/colbyblair/code/blair_tech_works/ai-studio && npm run dev:orchestrator"],
+      "runtimeArgs": ["-c", "export PATH=/usr/local/bin:$PATH && cd /Users/colbyblair/src/ai-studio && npm run dev:orchestrator"],
       "port": 3001
     },
     {
       "name": "dashboard",
       "runtimeExecutable": "/bin/sh",
-      "runtimeArgs": ["-c", "export PATH=/usr/local/bin:$PATH && cd /Users/colbyblair/code/blair_tech_works/ai-studio && npm run dev:dashboard"],
+      "runtimeArgs": ["-c", "export PATH=/usr/local/bin:$PATH && cd /Users/colbyblair/src/ai-studio && npm run dev:dashboard"],
       "port": 3000
     }
   ]
