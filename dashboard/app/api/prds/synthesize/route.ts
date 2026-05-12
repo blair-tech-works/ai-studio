@@ -22,9 +22,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(data);
   } catch (error) {
     console.error('Synthesis proxy error:', error);
-    return NextResponse.json(
-      { error: 'Synthesis request failed or timed out' },
-      { status: 502 }
-    );
+    const isTimeout = error instanceof DOMException && error.name === 'TimeoutError';
+    const isNetwork = error instanceof TypeError;
+    const message = isTimeout
+      ? 'Synthesis timed out (>3min)'
+      : isNetwork
+        ? 'Cannot reach orchestrator at localhost:3001 — is it running? Start it with `npm run dev:orchestrator` in a plain terminal.'
+        : error instanceof Error
+          ? error.message
+          : 'Synthesis request failed';
+    return NextResponse.json({ error: message }, { status: 502 });
   }
 }
